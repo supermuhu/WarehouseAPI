@@ -1,14 +1,14 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using RentalCarAPI.Helpers;
-using RentalCarAPI.ModelView.Auth;
-using RentalCarAPI.ModelView.Token;
-using RentalCarAPI.ModelView.User;
-using RentalCarAPI.Services.Auth;
-using RentalCarAPI.Services.User;
+using WarehouseAPI.Helpers;
+using WarehouseAPI.ModelView.Auth;
+using WarehouseAPI.ModelView.Token;
+using WarehouseAPI.ModelView.User;
+using WarehouseAPI.Services.Auth;
+using WarehouseAPI.Services.User;
 
-namespace RentalCarAPI.Controllers
+namespace WarehouseAPI.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]

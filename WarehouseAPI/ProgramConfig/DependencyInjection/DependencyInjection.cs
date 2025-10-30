@@ -1,6 +1,6 @@
-﻿using RentalCarAPI.Configuration;
+﻿using WarehouseAPI.Configuration;
 
-namespace RentalCarAPI.ProgramConfig.DependencyInjection
+namespace WarehouseAPI.ProgramConfig.DependencyInjection
 {
     public static class DependencyInjection
     {

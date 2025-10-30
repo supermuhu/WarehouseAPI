@@ -1,6 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 
-namespace RentalCarAPI.ProgramConfig.Policy
+namespace WarehouseAPI.ProgramConfig.Policy
 {
     public static class AuthorizationPolicy
     {
