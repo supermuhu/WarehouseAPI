@@ -1,7 +1,7 @@
 ﻿using Microsoft.OpenApi.Models;
 using Swashbuckle.AspNetCore.SwaggerGen;
 
-namespace TicketWebAPI.ProgramConfig.Swagger
+namespace WarehouseAPI.ProgramConfig.Swagger
 {
     public class SwaggerFileOperationFilter : IOperationFilter
     {

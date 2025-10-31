@@ -1,0 +1,45 @@
+﻿using System;
+using System.Collections.Generic;
+
+namespace WarehouseAPI.Data;
+
+public partial class Item
+{
+    public string ItemId { get; set; } = null!;
+
+    public string QrCode { get; set; } = null!;
+
+    public string CustomerId { get; set; } = null!;
+
+    public string ItemName { get; set; } = null!;
+
+    public string ItemType { get; set; } = null!;
+
+    public decimal Length { get; set; }
+
+    public decimal Width { get; set; }
+
+    public decimal Height { get; set; }
+
+    public decimal? Weight { get; set; }
+
+    public string? Shape { get; set; }
+
+    public int? PriorityLevel { get; set; }
+
+    public bool? IsHeavy { get; set; }
+
+    public bool? IsFragile { get; set; }
+
+    public DateTime? CreatedAt { get; set; }
+
+    public virtual Account Customer { get; set; } = null!;
+
+    public virtual ICollection<InboundItem> InboundItems { get; set; } = new List<InboundItem>();
+
+    public virtual ICollection<ItemAllocation> ItemAllocations { get; set; } = new List<ItemAllocation>();
+
+    public virtual ICollection<ItemLocationHistory> ItemLocationHistories { get; set; } = new List<ItemLocationHistory>();
+
+    public virtual ICollection<OutboundItem> OutboundItems { get; set; } = new List<OutboundItem>();
+}

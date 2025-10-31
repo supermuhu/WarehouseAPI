@@ -1,10 +1,10 @@
 ﻿using Microsoft.AspNetCore.Http;
 using System;
 using System.IO;
-using TicketWebAPI.Data;
-using TicketWebAPI.Helpers;
+// using WarehouseAPI.Data;
+using WarehouseAPI.Helpers;
 
-namespace TicketWebAPI.Helpers
+namespace WarehouseAPI.Helpers
 {
     public static class StoreImage
     {

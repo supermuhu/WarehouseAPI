@@ -5,7 +5,7 @@ using System.Text;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
-namespace TicketWebAPI.Helpers
+namespace WarehouseAPI.Helpers
 {
     public class Utils
     {
