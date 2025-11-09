@@ -5,11 +5,11 @@ namespace WarehouseAPI.Data;
 
 public partial class ItemAllocation
 {
-    public string AllocationId { get; set; } = null!;
+    public int AllocationId { get; set; }
 
-    public string ItemId { get; set; } = null!;
+    public int ItemId { get; set; }
 
-    public string PalletId { get; set; } = null!;
+    public int PalletId { get; set; }
 
     public decimal? PositionX { get; set; }
 

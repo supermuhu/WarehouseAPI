@@ -1,37 +1,29 @@
-﻿// using Microsoft.Extensions.DependencyInjection;
-// using WarehouseAPI.Services;
-// using WarehouseAPI.Services.Auth;
-// using WarehouseAPI.Services.User;
-// using WarehouseAPI.Services.GenerateToken;
-// using WarehouseAPI.Services.Role;
-// using WarehouseAPI.Services.UserStatus;
-// using WarehouseAPI.Services.GenerateToken;
-// using WarehouseAPI.Services;
+using Microsoft.Extensions.DependencyInjection;
+using WarehouseAPI.Services.Auth;
+using WarehouseAPI.Services.Warehouse;
 
+namespace WarehouseAPI.ProgramConfig
+{
+    public static class AddLifeTime
+    {
+        public static void AddScoped(this IServiceCollection services)
+        {
+            // Auth services
+            services.AddScoped<IAuthService, AuthService>();
 
-// namespace WarehouseAPI.ProgramConfig
-// {
-//     public static class AddLifeTime
-//     {
-//         public static void AddScoped(this IServiceCollection services)
-//         {
-//             // Core services
-//             services.AddScoped<IAuthService, AuthService>();
-//             services.AddScoped<IUserService, UserServiceOptimized>();
-
-//             // Lookup table services
-//             services.AddScoped<IRoleService, RoleService>();
-//             services.AddScoped<IUserStatusService, UserStatusService>();
-//         }
-//         public static void AddSingleton(this IServiceCollection services)
-//         {
-//             services.AddSingleton<VNPayService>();
-//             services.AddSingleton<EmailService>();
-//         }
-//         public static void AddTransient(this IServiceCollection services)
-//         {
-//             services.AddTransient<EncryptionService>();
-//             services.AddTransient<GenerateTokenService>();
-//         }
-//     }
-// }
+            // Warehouse services
+            services.AddScoped<IWarehouseService, WarehouseService>();
+        }
+        
+        public static void AddSingleton(this IServiceCollection services)
+        {
+            // services.AddSingleton<VNPayService>();
+            // services.AddSingleton<EmailService>();
+        }
+        
+        public static void AddTransient(this IServiceCollection services)
+        {
+            // services.AddTransient<EncryptionService>();
+        }
+    }
+}

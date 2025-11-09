@@ -5,19 +5,19 @@ namespace WarehouseAPI.Data;
 
 public partial class ItemLocationHistory
 {
-    public string HistoryId { get; set; } = null!;
+    public int HistoryId { get; set; }
 
-    public string ItemId { get; set; } = null!;
+    public int ItemId { get; set; }
 
-    public string? PalletId { get; set; }
+    public int? PalletId { get; set; }
 
-    public string? LocationId { get; set; }
+    public int? LocationId { get; set; }
 
     public string ActionType { get; set; } = null!;
 
     public DateTime? ActionDate { get; set; }
 
-    public string PerformedBy { get; set; } = null!;
+    public int PerformedBy { get; set; }
 
     public string? Notes { get; set; }
 

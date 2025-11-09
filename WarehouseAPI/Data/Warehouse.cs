@@ -5,9 +5,9 @@ namespace WarehouseAPI.Data;
 
 public partial class Warehouse
 {
-    public string WarehouseId { get; set; } = null!;
+    public int WarehouseId { get; set; }
 
-    public string OwnerId { get; set; } = null!;
+    public int OwnerId { get; set; }
 
     public string WarehouseName { get; set; } = null!;
 

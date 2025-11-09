@@ -5,13 +5,13 @@ namespace WarehouseAPI.Data;
 
 public partial class WarehouseZone
 {
-    public string ZoneId { get; set; } = null!;
+    public int ZoneId { get; set; }
 
-    public string WarehouseId { get; set; } = null!;
+    public int WarehouseId { get; set; }
 
     public string? ZoneName { get; set; }
 
-    public string? CustomerId { get; set; }
+    public int? CustomerId { get; set; }
 
     public decimal PositionX { get; set; }
 

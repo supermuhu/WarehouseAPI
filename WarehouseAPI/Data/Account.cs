@@ -5,7 +5,7 @@ namespace WarehouseAPI.Data;
 
 public partial class Account
 {
-    public string AccountId { get; set; } = null!;
+    public int AccountId { get; set; }
 
     public string Username { get; set; } = null!;
 

@@ -5,11 +5,11 @@ namespace WarehouseAPI.Data;
 
 public partial class OutboundItem
 {
-    public string OutboundItemId { get; set; } = null!;
+    public int OutboundItemId { get; set; }
 
-    public string ReceiptId { get; set; } = null!;
+    public int ReceiptId { get; set; }
 
-    public string ItemId { get; set; } = null!;
+    public int ItemId { get; set; }
 
     public int? Quantity { get; set; }
 

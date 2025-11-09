@@ -5,9 +5,9 @@ namespace WarehouseAPI.Data;
 
 public partial class Shelf
 {
-    public string ShelfId { get; set; } = null!;
+    public int ShelfId { get; set; }
 
-    public string RackId { get; set; } = null!;
+    public int RackId { get; set; }
 
     public int ShelfLevel { get; set; }
 

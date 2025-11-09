@@ -5,11 +5,11 @@ namespace WarehouseAPI.Data;
 
 public partial class OutboundReceipt
 {
-    public string ReceiptId { get; set; } = null!;
+    public int ReceiptId { get; set; }
 
-    public string WarehouseId { get; set; } = null!;
+    public int WarehouseId { get; set; }
 
-    public string CustomerId { get; set; } = null!;
+    public int CustomerId { get; set; }
 
     public string ReceiptNumber { get; set; } = null!;
 
@@ -19,7 +19,7 @@ public partial class OutboundReceipt
 
     public string? Notes { get; set; }
 
-    public string CreatedBy { get; set; } = null!;
+    public int CreatedBy { get; set; }
 
     public string? Status { get; set; }
 

@@ -5,19 +5,19 @@ namespace WarehouseAPI.Data;
 
 public partial class VPalletInventory
 {
-    public string PalletId { get; set; } = null!;
+    public int PalletId { get; set; }
 
     public string Barcode { get; set; } = null!;
 
-    public string? ZoneId { get; set; }
+    public int? ZoneId { get; set; }
 
     public string? ZoneName { get; set; }
 
-    public string? CustomerId { get; set; }
+    public int? CustomerId { get; set; }
 
     public string? CustomerName { get; set; }
 
-    public string? ShelfId { get; set; }
+    public int? ShelfId { get; set; }
 
     public decimal? PositionX { get; set; }
 

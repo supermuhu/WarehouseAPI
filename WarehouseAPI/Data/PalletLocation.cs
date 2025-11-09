@@ -5,13 +5,13 @@ namespace WarehouseAPI.Data;
 
 public partial class PalletLocation
 {
-    public string LocationId { get; set; } = null!;
+    public int LocationId { get; set; }
 
-    public string PalletId { get; set; } = null!;
+    public int PalletId { get; set; }
 
-    public string ZoneId { get; set; } = null!;
+    public int ZoneId { get; set; }
 
-    public string? ShelfId { get; set; }
+    public int? ShelfId { get; set; }
 
     public decimal PositionX { get; set; }
 
@@ -21,7 +21,7 @@ public partial class PalletLocation
 
     public int? StackLevel { get; set; }
 
-    public string? StackedOnPallet { get; set; }
+    public int? StackedOnPallet { get; set; }
 
     public bool? IsGround { get; set; }
 

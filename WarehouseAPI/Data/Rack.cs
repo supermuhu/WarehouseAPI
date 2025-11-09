@@ -5,9 +5,9 @@ namespace WarehouseAPI.Data;
 
 public partial class Rack
 {
-    public string RackId { get; set; } = null!;
+    public int RackId { get; set; }
 
-    public string ZoneId { get; set; } = null!;
+    public int ZoneId { get; set; }
 
     public string? RackName { get; set; }
 

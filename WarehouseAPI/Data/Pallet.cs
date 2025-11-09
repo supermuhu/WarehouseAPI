@@ -5,7 +5,7 @@ namespace WarehouseAPI.Data;
 
 public partial class Pallet
 {
-    public string PalletId { get; set; } = null!;
+    public int PalletId { get; set; }
 
     public string Barcode { get; set; } = null!;
 

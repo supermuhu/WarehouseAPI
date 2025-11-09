@@ -5,11 +5,11 @@ namespace WarehouseAPI.Data;
 
 public partial class Item
 {
-    public string ItemId { get; set; } = null!;
+    public int ItemId { get; set; }
 
     public string QrCode { get; set; } = null!;
 
-    public string CustomerId { get; set; } = null!;
+    public int CustomerId { get; set; }
 
     public string ItemName { get; set; } = null!;
 

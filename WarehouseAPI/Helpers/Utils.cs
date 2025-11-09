@@ -1,14 +1,43 @@
-﻿using System.Net.Sockets;
+using System.Net.Sockets;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using System.Security.Claims;
 
 namespace WarehouseAPI.Helpers
 {
     public class Utils
     {
+        /// <summary>
+        /// Lấy AccountId từ JWT token claims
+        /// </summary>
+        public static int? GetCurrentAccountId(ClaimsPrincipal user)
+        {
+            var accountIdClaim = user.FindFirst("AccountId");
+            if (accountIdClaim != null && int.TryParse(accountIdClaim.Value, out int accountId))
+            {
+                return accountId;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Lấy Role từ JWT token claims
+        /// </summary>
+        public static string GetCurrentRole(ClaimsPrincipal user)
+        {
+            return user.FindFirst("Role")?.Value ?? "";
+        }
+
+        /// <summary>
+        /// Lấy Username từ JWT token claims
+        /// </summary>
+        public static string GetCurrentUsername(ClaimsPrincipal user)
+        {
+            return user.FindFirst("Username")?.Value ?? "";
+        }
         public static string HmacSHA512(string key, string inputData)
         {
             var hash = new StringBuilder();

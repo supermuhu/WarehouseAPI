@@ -5,25 +5,25 @@ namespace WarehouseAPI.Data;
 
 public partial class VItemPrioritySearch
 {
-    public string ItemId { get; set; } = null!;
+    public int ItemId { get; set; }
 
     public string QrCode { get; set; } = null!;
 
     public string ItemName { get; set; } = null!;
 
-    public string CustomerId { get; set; } = null!;
+    public int CustomerId { get; set; }
 
     public string? CustomerName { get; set; }
 
-    public string? PalletId { get; set; }
+    public int? PalletId { get; set; }
 
     public string? PalletBarcode { get; set; }
 
-    public string? ZoneId { get; set; }
+    public int? ZoneId { get; set; }
 
     public string? ZoneName { get; set; }
 
-    public string? ShelfId { get; set; }
+    public int? ShelfId { get; set; }
 
     public int? ShelfLevel { get; set; }
 
