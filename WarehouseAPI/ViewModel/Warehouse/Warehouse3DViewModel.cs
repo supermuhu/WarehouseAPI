@@ -120,12 +120,25 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public string? QrCode { get; set; }
         public string? ItemName { get; set; }
         public string? ItemType { get; set; }
+        
+        // Product information
+        public int ProductId { get; set; }
+        public string? ProductCode { get; set; }
+        public string? ProductName { get; set; }
+        public string? Unit { get; set; }
+        public string? Category { get; set; }
+        
+        // Customer information
         public int CustomerId { get; set; }
         public string? CustomerName { get; set; }
+        
+        // Pallet information
         public int PalletId { get; set; }
         public decimal? PositionX { get; set; }
         public decimal? PositionY { get; set; }
         public decimal? PositionZ { get; set; }
+        
+        // Item dimensions and properties
         public decimal Length { get; set; }
         public decimal Width { get; set; }
         public decimal Height { get; set; }
@@ -134,5 +147,10 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public int? PriorityLevel { get; set; }
         public bool? IsHeavy { get; set; }
         public bool? IsFragile { get; set; }
+        
+        // Batch and date information
+        public string? BatchNumber { get; set; }
+        public DateOnly? ManufacturingDate { get; set; }
+        public DateOnly? ExpiryDate { get; set; }
     }
 }

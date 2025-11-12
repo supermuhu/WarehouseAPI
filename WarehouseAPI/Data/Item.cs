@@ -9,6 +9,8 @@ public partial class Item
 
     public string QrCode { get; set; } = null!;
 
+    public int ProductId { get; set; }
+
     public int CustomerId { get; set; }
 
     public string ItemName { get; set; } = null!;
@@ -31,7 +33,15 @@ public partial class Item
 
     public bool? IsFragile { get; set; }
 
+    public string? BatchNumber { get; set; }
+
+    public DateOnly? ManufacturingDate { get; set; }
+
+    public DateOnly? ExpiryDate { get; set; }
+
     public DateTime? CreatedAt { get; set; }
+
+    public virtual Product Product { get; set; } = null!;
 
     public virtual Account Customer { get; set; } = null!;
 

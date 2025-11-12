@@ -119,6 +119,8 @@ namespace WarehouseAPI.Services.Warehouse
                 var items = db.ItemAllocations
                     .Include(ia => ia.Item)
                     .ThenInclude(i => i.Customer)
+                    .Include(ia => ia.Item)
+                    .ThenInclude(i => i.Product)
                     .Where(ia => palletIds.Contains(ia.PalletId))
                     .Select(ia => new ItemAllocationViewModel
                     {
@@ -127,12 +129,25 @@ namespace WarehouseAPI.Services.Warehouse
                         QrCode = ia.Item.QrCode,
                         ItemName = ia.Item.ItemName,
                         ItemType = ia.Item.ItemType,
+                        
+                        // Product information
+                        ProductId = ia.Item.ProductId,
+                        ProductCode = ia.Item.Product.ProductCode,
+                        ProductName = ia.Item.Product.ProductName,
+                        Unit = ia.Item.Product.Unit,
+                        Category = ia.Item.Product.Category,
+                        
+                        // Customer information
                         CustomerId = ia.Item.CustomerId,
                         CustomerName = ia.Item.Customer.FullName,
+                        
+                        // Pallet information
                         PalletId = ia.PalletId,
                         PositionX = ia.PositionX,
                         PositionY = ia.PositionY,
                         PositionZ = ia.PositionZ,
+                        
+                        // Item dimensions and properties
                         Length = ia.Item.Length,
                         Width = ia.Item.Width,
                         Height = ia.Item.Height,
@@ -140,7 +155,12 @@ namespace WarehouseAPI.Services.Warehouse
                         Shape = ia.Item.Shape,
                         PriorityLevel = ia.Item.PriorityLevel,
                         IsHeavy = ia.Item.IsHeavy,
-                        IsFragile = ia.Item.IsFragile
+                        IsFragile = ia.Item.IsFragile,
+                        
+                        // Batch and date information
+                        BatchNumber = ia.Item.BatchNumber,
+                        ManufacturingDate = ia.Item.ManufacturingDate,
+                        ExpiryDate = ia.Item.ExpiryDate
                     })
                     .ToList();
 

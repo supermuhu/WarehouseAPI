@@ -181,7 +181,47 @@ CREATE TABLE pallet_locations (
 GO
 
 -- ===================================
--- 8. BẢNG HÀNG HÓA
+-- 8. BẢNG SẢN PHẨM (PRODUCTS)
+-- ===================================
+IF OBJECT_ID('products', 'U') IS NOT NULL DROP TABLE products;
+GO
+
+CREATE TABLE products (
+    product_id INT IDENTITY(1,1) PRIMARY KEY,
+    product_code VARCHAR(100) UNIQUE NOT NULL, -- Mã sản phẩm
+    product_name NVARCHAR(300) NOT NULL, -- Tên sản phẩm
+    description NVARCHAR(MAX), -- Mô tả sản phẩm
+    unit NVARCHAR(50) NOT NULL, -- Đơn vị tính (kg, thùng, bao, cái, etc.)
+    category NVARCHAR(100), -- Danh mục (điện tử, thực phẩm, vật liệu xây dựng, etc.)
+    standard_length DECIMAL(10,2), -- Kích thước chuẩn (m)
+    standard_width DECIMAL(10,2),
+    standard_height DECIMAL(10,2),
+    standard_weight DECIMAL(10,2), -- Trọng lượng chuẩn (kg)
+    is_fragile BIT DEFAULT 0, -- Hàng dễ vỡ
+    is_hazardous BIT DEFAULT 0, -- Hàng nguy hiểm
+    storage_conditions NVARCHAR(MAX), -- Điều kiện bảo quản
+    created_at DATETIME2 DEFAULT GETDATE(),
+    updated_at DATETIME2 DEFAULT GETDATE(),
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive'))
+);
+GO
+
+-- Trigger cập nhật updated_at cho products
+CREATE OR ALTER TRIGGER trg_products_updated_at
+ON products
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    UPDATE products
+    SET updated_at = GETDATE()
+    FROM products p
+    INNER JOIN inserted i ON p.product_id = i.product_id;
+END
+GO
+
+-- ===================================
+-- 9. BẢNG HÀNG HÓA (ITEMS)
 -- ===================================
 IF OBJECT_ID('items', 'U') IS NOT NULL DROP TABLE items;
 GO
@@ -189,6 +229,7 @@ GO
 CREATE TABLE items (
     item_id INT IDENTITY(1,1) PRIMARY KEY,
     qr_code VARCHAR(100) UNIQUE NOT NULL, -- QR Code cho từng hàng
+    product_id INT NOT NULL, -- Loại sản phẩm
     customer_id INT NOT NULL, -- Chủ hàng
     item_name NVARCHAR(300) NOT NULL,
     item_type VARCHAR(20) NOT NULL CHECK (item_type IN ('bag', 'box', 'custom')), -- Bao, thùng, tùy chỉnh
@@ -200,13 +241,17 @@ CREATE TABLE items (
     priority_level INT DEFAULT 5 CHECK (priority_level BETWEEN 1 AND 10), -- 1-10, số nhỏ = ưu tiên cao (hay lấy)
     is_heavy BIT DEFAULT 0,
     is_fragile BIT DEFAULT 0,
+    batch_number NVARCHAR(100), -- Số lô
+    manufacturing_date DATE, -- Ngày sản xuất
+    expiry_date DATE, -- Ngày hết hạn
     created_at DATETIME2 DEFAULT GETDATE(),
+    CONSTRAINT FK_items_product FOREIGN KEY (product_id) REFERENCES products(product_id),
     CONSTRAINT FK_items_customer FOREIGN KEY (customer_id) REFERENCES accounts(account_id)
 );
 GO
 
 -- ===================================
--- 9. BẢNG PHÂN BỔ HÀNG TRÊN PALLET
+-- 10. BẢNG PHÂN BỔ HÀNG TRÊN PALLET
 -- ===================================
 IF OBJECT_ID('item_allocations', 'U') IS NOT NULL DROP TABLE item_allocations;
 GO
@@ -225,7 +270,7 @@ CREATE TABLE item_allocations (
 GO
 
 -- ===================================
--- 10. BẢNG PHIẾU NHẬP KHO
+-- 11. BẢNG PHIẾU NHẬP KHO
 -- ===================================
 IF OBJECT_ID('inbound_receipts', 'U') IS NOT NULL DROP TABLE inbound_receipts;
 GO
@@ -266,7 +311,7 @@ CREATE TABLE inbound_items (
 GO
 
 -- ===================================
--- 12. BẢNG PHIẾU XUẤT KHO
+-- 13. BẢNG PHIẾU XUẤT KHO
 -- ===================================
 IF OBJECT_ID('outbound_receipts', 'U') IS NOT NULL DROP TABLE outbound_receipts;
 GO
@@ -288,7 +333,7 @@ CREATE TABLE outbound_receipts (
 GO
 
 -- ===================================
--- 13. CHI TIẾT PHIẾU XUẤT
+-- 14. CHI TIẾT PHIẾU XUẤT
 -- ===================================
 IF OBJECT_ID('outbound_items', 'U') IS NOT NULL DROP TABLE outbound_items;
 GO
@@ -305,7 +350,7 @@ CREATE TABLE outbound_items (
 GO
 
 -- ===================================
--- 14. LỊCH SỬ VỊ TRÍ HÀNG (Audit log)
+-- 15. LỊCH SỬ VỊ TRÍ HÀNG (Audit log)
 -- ===================================
 IF OBJECT_ID('item_location_history', 'U') IS NOT NULL DROP TABLE item_location_history;
 GO
@@ -337,6 +382,8 @@ CREATE NONCLUSTERED INDEX IX_racks_zone ON racks(zone_id);
 CREATE NONCLUSTERED INDEX IX_shelves_rack ON shelves(rack_id);
 CREATE NONCLUSTERED INDEX IX_pallet_locations_zone ON pallet_locations(zone_id);
 CREATE NONCLUSTERED INDEX IX_pallet_locations_shelf ON pallet_locations(shelf_id);
+CREATE NONCLUSTERED INDEX IX_products_category ON products(category);
+CREATE NONCLUSTERED INDEX IX_items_product ON items(product_id);
 CREATE NONCLUSTERED INDEX IX_items_customer ON items(customer_id);
 CREATE NONCLUSTERED INDEX IX_item_allocations_pallet ON item_allocations(pallet_id);
 CREATE NONCLUSTERED INDEX IX_inbound_warehouse ON inbound_receipts(warehouse_id);
@@ -396,6 +443,11 @@ SELECT
     i.item_id,
     i.qr_code,
     i.item_name,
+    i.product_id,
+    prod.product_name,
+    prod.product_code,
+    prod.unit,
+    prod.category,
     i.customer_id,
     acc.full_name as customer_name,
     ia.pallet_id,
@@ -410,6 +462,9 @@ SELECT
     i.priority_level,
     i.is_heavy,
     i.weight,
+    i.batch_number,
+    i.manufacturing_date,
+    i.expiry_date,
     ir.inbound_date,
     CASE 
         WHEN pl.is_ground = 1 THEN 'ground'
@@ -418,6 +473,7 @@ SELECT
         ELSE 'top_shelf'
     END as storage_position
 FROM items i
+INNER JOIN products prod ON i.product_id = prod.product_id
 INNER JOIN accounts acc ON i.customer_id = acc.account_id
 LEFT JOIN item_allocations ia ON i.item_id = ia.item_id
 LEFT JOIN pallets p ON ia.pallet_id = p.pallet_id
@@ -760,7 +816,53 @@ VALUES
 GO
 
 -- ===================================
--- 8. HÀNG HÓA (Items)
+-- 8. SẢN PHẨM (Products)
+-- ===================================
+
+INSERT INTO products (product_code, product_name, description, unit, category, standard_length, standard_width, standard_height, standard_weight, is_fragile, is_hazardous, storage_conditions, status)
+VALUES 
+    -- Điện tử
+    ('PROD-ELEC-001', N'Đồ điện tử Samsung', N'Các sản phẩm điện tử Samsung bao gồm điện thoại, tablet, phụ kiện', N'Thùng', N'Điện tử', 0.50, 0.40, 0.35, 18.5, 1, 0, N'Tránh ẩm, nhiệt độ phòng', 'active'),
+    ('PROD-ELEC-002', N'Linh kiện máy tính', N'Linh kiện máy tính như RAM, ổ cứng, card màn hình', N'Thùng', N'Điện tử', 0.45, 0.40, 0.30, 14.0, 1, 0, N'Tránh ẩm, tĩnh điện', 'active'),
+    ('PROD-ELEC-003', N'Đèn LED', N'Đèn LED chiếu sáng các loại', N'Thùng', N'Điện tử', 0.55, 0.40, 0.30, 12.0, 1, 0, N'Tránh va đập', 'active'),
+    ('PROD-ELEC-004', N'Thiết bị điện', N'Thiết bị điện công nghiệp', N'Thùng', N'Điện tử', 0.50, 0.45, 0.35, 16.5, 0, 0, N'Khô ráo', 'active'),
+    
+    -- Thực phẩm
+    ('PROD-FOOD-001', N'Gạo ST25', N'Gạo ST25 cao cấp', N'Bao 50kg', N'Thực phẩm', 0.80, 0.50, 0.20, 50.0, 0, 0, N'Khô ráo, thoáng mát', 'active'),
+    ('PROD-FOOD-002', N'Thực phẩm đóng hộp', N'Thực phẩm đóng hộp các loại', N'Thùng', N'Thực phẩm', 0.50, 0.40, 0.35, 18.0, 0, 0, N'Nơi khô ráo, tránh ánh sáng', 'active'),
+    
+    -- Vật liệu xây dựng
+    ('PROD-CONST-001', N'Xi măng', N'Xi măng PCB40', N'Bao 50kg', N'Vật liệu xây dựng', 0.75, 0.48, 0.18, 50.0, 0, 0, N'Tránh ẩm', 'active'),
+    ('PROD-CONST-002', N'Cát xây dựng', N'Cát xây dựng đã sàng', N'Bao 40kg', N'Vật liệu xây dựng', 0.70, 0.45, 0.20, 40.0, 0, 0, N'Bảo quản khô', 'active'),
+    ('PROD-CONST-003', N'Phân bón', N'Phân bón NPK', N'Bao 40kg', N'Vật liệu xây dựng', 0.70, 0.45, 0.18, 40.0, 0, 0, N'Khô ráo, thoáng mát', 'active'),
+    ('PROD-CONST-004', N'Vật liệu xây dựng tổng hợp', N'Các loại vật liệu xây dựng khác', N'Thùng', N'Vật liệu xây dựng', 0.70, 0.55, 0.40, 35.0, 0, 0, N'Bình thường', 'active'),
+    ('PROD-CONST-005', N'Dụng cụ cơ khí', N'Dụng cụ và thiết bị cơ khí', N'Thùng', N'Vật liệu xây dựng', 0.60, 0.50, 0.45, 25.0, 0, 0, N'Khô ráo', 'active'),
+    
+    -- Thời trang
+    ('PROD-FASH-001', N'Quần áo xuất khẩu', N'Quần áo may mặc xuất khẩu', N'Thùng', N'Thời trang', 0.60, 0.45, 0.40, 12.0, 0, 0, N'Khô ráo, thoáng mát', 'active'),
+    ('PROD-FASH-002', N'Giày thể thao', N'Giày thể thao các loại', N'Thùng', N'Thời trang', 0.55, 0.40, 0.35, 15.0, 0, 0, N'Tránh ẩm', 'active'),
+    
+    -- Mỹ phẩm
+    ('PROD-COSM-001', N'Mỹ phẩm cao cấp', N'Mỹ phẩm chăm sóc da cao cấp', N'Thùng', N'Mỹ phẩm', 0.40, 0.35, 0.30, 8.5, 1, 0, N'Nhiệt độ phòng, tránh ánh sáng', 'active'),
+    
+    -- Đồ chơi
+    ('PROD-TOY-001', N'Đồ chơi trẻ em', N'Đồ chơi an toàn cho trẻ em', N'Thùng', N'Đồ chơi', 0.50, 0.45, 0.40, 10.0, 0, 0, N'Khô ráo', 'active'),
+    
+    -- Văn phòng phẩm
+    ('PROD-STAT-001', N'Sách giáo khoa', N'Sách giáo khoa các cấp', N'Thùng', N'Văn phòng phẩm', 0.50, 0.40, 0.35, 20.0, 0, 0, N'Tránh ẩm', 'active'),
+    ('PROD-STAT-002', N'Văn phòng phẩm', N'Văn phòng phẩm văn phòng', N'Thùng', N'Văn phòng phẩm', 0.45, 0.35, 0.30, 9.0, 0, 0, N'Bình thường', 'active'),
+    
+    -- Y tế & Dược phẩm
+    ('PROD-MED-001', N'Thiết bị y tế', N'Thiết bị y tế chuyên dụng', N'Thùng', N'Y tế', 0.40, 0.35, 0.28, 7.5, 1, 0, N'Nhiệt độ 15-25°C, tránh ẩm', 'active'),
+    ('PROD-MED-002', N'Dược phẩm', N'Dược phẩm và thuốc men', N'Thùng', N'Dược phẩm', 0.38, 0.32, 0.25, 6.0, 1, 0, N'Nhiệt độ 2-8°C, tránh ánh sáng', 'active'),
+    
+    -- Đồ gia dụng
+    ('PROD-HOME-001', N'Đồ gia dụng', N'Đồ gia dụng các loại', N'Thùng', N'Gia dụng', 0.55, 0.45, 0.40, 13.5, 0, 0, N'Bình thường', 'active');
+
+GO
+
+-- ===================================
+-- 9. HÀNG HÓA (Items)
 -- ===================================
 
 DECLARE @customer_a_id_item INT = (SELECT account_id FROM accounts WHERE username = 'customer_a');
@@ -768,41 +870,41 @@ DECLARE @customer_b_id_item INT = (SELECT account_id FROM accounts WHERE usernam
 DECLARE @customer_c_id_item INT = (SELECT account_id FROM accounts WHERE username = 'customer_c');
 
 -- Hàng của khách Lan (Customer A) - 8 items
-INSERT INTO items (qr_code, customer_id, item_name, item_type, length, width, height, weight, shape, priority_level, is_heavy, is_fragile)
+INSERT INTO items (qr_code, product_id, customer_id, item_name, item_type, length, width, height, weight, shape, priority_level, is_heavy, is_fragile, batch_number, manufacturing_date, expiry_date)
 VALUES 
-    ('QR-A001', @customer_a_id_item, N'Thùng đồ điện tử Samsung', 'box', 0.50, 0.40, 0.35, 18.5, 'rectangle', 2, 0, 1),
-    ('QR-A002', @customer_a_id_item, N'Thùng quần áo xuất khẩu', 'box', 0.60, 0.45, 0.40, 12.0, 'rectangle', 5, 0, 0),
-    ('QR-A003', @customer_a_id_item, N'Bao gạo ST25 50kg', 'bag', 0.80, 0.50, 0.20, 50.0, 'rectangle', 7, 1, 0),
-    ('QR-A004', @customer_a_id_item, N'Thùng mỹ phẩm cao cấp', 'box', 0.40, 0.35, 0.30, 8.5, 'rectangle', 1, 0, 1),
-    ('QR-A005', @customer_a_id_item, N'Thùng giày thể thao', 'box', 0.55, 0.40, 0.35, 15.0, 'rectangle', 3, 0, 0),
-    ('QR-A006', @customer_a_id_item, N'Bao phân bón 40kg', 'bag', 0.70, 0.45, 0.18, 40.0, 'rectangle', 9, 1, 0),
-    ('QR-A007', @customer_a_id_item, N'Thùng đồ chơi trẻ em', 'box', 0.50, 0.45, 0.40, 10.0, 'rectangle', 4, 0, 0),
-    ('QR-A008', @customer_a_id_item, N'Thùng linh kiện máy tính', 'box', 0.45, 0.40, 0.30, 14.0, 'rectangle', 2, 0, 1);
+    ('QR-A001', (SELECT product_id FROM products WHERE product_code = 'PROD-ELEC-001'), @customer_a_id_item, N'Thùng đồ điện tử Samsung', 'box', 0.50, 0.40, 0.35, 18.5, 'rectangle', 2, 0, 1, 'BATCH-2025-001', '2025-10-01', NULL),
+    ('QR-A002', (SELECT product_id FROM products WHERE product_code = 'PROD-FASH-001'), @customer_a_id_item, N'Thùng quần áo xuất khẩu', 'box', 0.60, 0.45, 0.40, 12.0, 'rectangle', 5, 0, 0, 'BATCH-2025-002', '2025-09-15', NULL),
+    ('QR-A003', (SELECT product_id FROM products WHERE product_code = 'PROD-FOOD-001'), @customer_a_id_item, N'Bao gạo ST25 50kg', 'bag', 0.80, 0.50, 0.20, 50.0, 'rectangle', 7, 1, 0, 'BATCH-2025-003', '2025-09-01', '2026-09-01'),
+    ('QR-A004', (SELECT product_id FROM products WHERE product_code = 'PROD-COSM-001'), @customer_a_id_item, N'Thùng mỹ phẩm cao cấp', 'box', 0.40, 0.35, 0.30, 8.5, 'rectangle', 1, 0, 1, 'BATCH-2025-004', '2025-08-01', '2027-08-01'),
+    ('QR-A005', (SELECT product_id FROM products WHERE product_code = 'PROD-FASH-002'), @customer_a_id_item, N'Thùng giày thể thao', 'box', 0.55, 0.40, 0.35, 15.0, 'rectangle', 3, 0, 0, 'BATCH-2025-005', '2025-09-20', NULL),
+    ('QR-A006', (SELECT product_id FROM products WHERE product_code = 'PROD-CONST-003'), @customer_a_id_item, N'Bao phân bón 40kg', 'bag', 0.70, 0.45, 0.18, 40.0, 'rectangle', 9, 1, 0, 'BATCH-2025-006', '2025-07-15', '2026-07-15'),
+    ('QR-A007', (SELECT product_id FROM products WHERE product_code = 'PROD-TOY-001'), @customer_a_id_item, N'Thùng đồ chơi trẻ em', 'box', 0.50, 0.45, 0.40, 10.0, 'rectangle', 4, 0, 0, 'BATCH-2025-007', '2025-09-10', NULL),
+    ('QR-A008', (SELECT product_id FROM products WHERE product_code = 'PROD-ELEC-002'), @customer_a_id_item, N'Thùng linh kiện máy tính', 'box', 0.45, 0.40, 0.30, 14.0, 'rectangle', 2, 0, 1, 'BATCH-2025-008', '2025-08-25', NULL);
 
 -- Hàng của khách Hùng (Customer B) - 6 items
-INSERT INTO items (qr_code, customer_id, item_name, item_type, length, width, height, weight, shape, priority_level, is_heavy, is_fragile)
+INSERT INTO items (qr_code, product_id, customer_id, item_name, item_type, length, width, height, weight, shape, priority_level, is_heavy, is_fragile, batch_number, manufacturing_date)
 VALUES 
-    ('QR-B001', @customer_b_id_item, N'Thùng dụng cụ cơ khí', 'box', 0.60, 0.50, 0.45, 25.0, 'rectangle', 6, 0, 0),
-    ('QR-B002', @customer_b_id_item, N'Bao xi măng 50kg', 'bag', 0.75, 0.48, 0.18, 50.0, 'rectangle', 10, 1, 0),
-    ('QR-B003', @customer_b_id_item, N'Thùng vật liệu xây dựng', 'box', 0.70, 0.55, 0.40, 35.0, 'rectangle', 8, 1, 0),
-    ('QR-B004', @customer_b_id_item, N'Thùng thiết bị điện', 'box', 0.50, 0.45, 0.35, 16.5, 'rectangle', 4, 0, 0),
-    ('QR-B005', @customer_b_id_item, N'Thùng đèn LED', 'box', 0.55, 0.40, 0.30, 12.0, 'rectangle', 3, 0, 1),
-    ('QR-B006', @customer_b_id_item, N'Bao cát xây dựng 40kg', 'bag', 0.70, 0.45, 0.20, 40.0, 'rectangle', 9, 1, 0);
+    ('QR-B001', (SELECT product_id FROM products WHERE product_code = 'PROD-CONST-005'), @customer_b_id_item, N'Thùng dụng cụ cơ khí', 'box', 0.60, 0.50, 0.45, 25.0, 'rectangle', 6, 0, 0, 'BATCH-2025-009', '2025-09-01'),
+    ('QR-B002', (SELECT product_id FROM products WHERE product_code = 'PROD-CONST-001'), @customer_b_id_item, N'Bao xi măng 50kg', 'bag', 0.75, 0.48, 0.18, 50.0, 'rectangle', 10, 1, 0, 'BATCH-2025-010', '2025-08-15'),
+    ('QR-B003', (SELECT product_id FROM products WHERE product_code = 'PROD-CONST-004'), @customer_b_id_item, N'Thùng vật liệu xây dựng', 'box', 0.70, 0.55, 0.40, 35.0, 'rectangle', 8, 1, 0, 'BATCH-2025-011', '2025-08-20'),
+    ('QR-B004', (SELECT product_id FROM products WHERE product_code = 'PROD-ELEC-004'), @customer_b_id_item, N'Thùng thiết bị điện', 'box', 0.50, 0.45, 0.35, 16.5, 'rectangle', 4, 0, 0, 'BATCH-2025-012', '2025-09-05'),
+    ('QR-B005', (SELECT product_id FROM products WHERE product_code = 'PROD-ELEC-003'), @customer_b_id_item, N'Thùng đèn LED', 'box', 0.55, 0.40, 0.30, 12.0, 'rectangle', 3, 0, 1, 'BATCH-2025-013', '2025-08-30'),
+    ('QR-B006', (SELECT product_id FROM products WHERE product_code = 'PROD-CONST-002'), @customer_b_id_item, N'Bao cát xây dựng 40kg', 'bag', 0.70, 0.45, 0.20, 40.0, 'rectangle', 9, 1, 0, 'BATCH-2025-014', '2025-07-25');
 
 -- Hàng của khách Mai (Customer C) - 6 items
-INSERT INTO items (qr_code, customer_id, item_name, item_type, length, width, height, weight, shape, priority_level, is_heavy, is_fragile)
+INSERT INTO items (qr_code, product_id, customer_id, item_name, item_type, length, width, height, weight, shape, priority_level, is_heavy, is_fragile, batch_number, manufacturing_date, expiry_date)
 VALUES 
-    ('QR-C001', @customer_c_id_item, N'Thùng sách giáo khoa', 'box', 0.50, 0.40, 0.35, 20.0, 'rectangle', 5, 0, 0),
-    ('QR-C002', @customer_c_id_item, N'Thùng văn phòng phẩm', 'box', 0.45, 0.35, 0.30, 9.0, 'rectangle', 2, 0, 0),
-    ('QR-C003', @customer_c_id_item, N'Thùng thiết bị y tế', 'box', 0.40, 0.35, 0.28, 7.5, 'rectangle', 1, 0, 1),
-    ('QR-C004', @customer_c_id_item, N'Thùng dược phẩm', 'box', 0.38, 0.32, 0.25, 6.0, 'rectangle', 1, 0, 1),
-    ('QR-C005', @customer_c_id_item, N'Thùng đồ gia dụng', 'box', 0.55, 0.45, 0.40, 13.5, 'rectangle', 6, 0, 0),
-    ('QR-C006', @customer_c_id_item, N'Thùng thực phẩm đóng hộp', 'box', 0.50, 0.40, 0.35, 18.0, 'rectangle', 4, 0, 0);
+    ('QR-C001', (SELECT product_id FROM products WHERE product_code = 'PROD-STAT-001'), @customer_c_id_item, N'Thùng sách giáo khoa', 'box', 0.50, 0.40, 0.35, 20.0, 'rectangle', 5, 0, 0, 'BATCH-2025-015', '2025-06-01', NULL),
+    ('QR-C002', (SELECT product_id FROM products WHERE product_code = 'PROD-STAT-002'), @customer_c_id_item, N'Thùng văn phòng phẩm', 'box', 0.45, 0.35, 0.30, 9.0, 'rectangle', 2, 0, 0, 'BATCH-2025-016', '2025-07-10', NULL),
+    ('QR-C003', (SELECT product_id FROM products WHERE product_code = 'PROD-MED-001'), @customer_c_id_item, N'Thùng thiết bị y tế', 'box', 0.40, 0.35, 0.28, 7.5, 'rectangle', 1, 0, 1, 'BATCH-2025-017', '2025-08-01', '2030-08-01'),
+    ('QR-C004', (SELECT product_id FROM products WHERE product_code = 'PROD-MED-002'), @customer_c_id_item, N'Thùng dược phẩm', 'box', 0.38, 0.32, 0.25, 6.0, 'rectangle', 1, 0, 1, 'BATCH-2025-018', '2025-09-01', '2027-09-01'),
+    ('QR-C005', (SELECT product_id FROM products WHERE product_code = 'PROD-HOME-001'), @customer_c_id_item, N'Thùng đồ gia dụng', 'box', 0.55, 0.45, 0.40, 13.5, 'rectangle', 6, 0, 0, 'BATCH-2025-019', '2025-08-10', NULL),
+    ('QR-C006', (SELECT product_id FROM products WHERE product_code = 'PROD-FOOD-002'), @customer_c_id_item, N'Thùng thực phẩm đóng hộp', 'box', 0.50, 0.40, 0.35, 18.0, 'rectangle', 4, 0, 0, 'BATCH-2025-020', '2025-07-01', '2027-07-01');
 
 GO
 
 -- ===================================
--- 9. PHÂN BỔ HÀNG TRÊN PALLET
+-- 10. PHÂN BỔ HÀNG TRÊN PALLET
 -- ===================================
 
 -- Pallet 1: 3 hàng của khách A
@@ -860,7 +962,7 @@ VALUES
 GO
 
 -- ===================================
--- 10. PHIẾU NHẬP KHO (3 phiếu)
+-- 11. PHIẾU NHẬP KHO (3 phiếu)
 -- ===================================
 
 DECLARE @admin_id INT = (SELECT account_id FROM accounts WHERE username = 'admin');
@@ -888,7 +990,7 @@ VALUES
 GO
 
 -- ===================================
--- 11. CHI TIẾT PHIẾU NHẬP
+-- 12. CHI TIẾT PHIẾU NHẬP
 -- ===================================
 
 -- Chi tiết phiếu 1 (Khách A - items 1-8)

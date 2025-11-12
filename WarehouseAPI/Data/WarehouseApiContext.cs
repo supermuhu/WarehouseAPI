@@ -35,6 +35,8 @@ public partial class WarehouseApiContext : DbContext
 
     public virtual DbSet<PalletLocation> PalletLocations { get; set; }
 
+    public virtual DbSet<Product> Products { get; set; }
+
     public virtual DbSet<Rack> Racks { get; set; }
 
     public virtual DbSet<Shelf> Shelves { get; set; }
@@ -185,13 +187,19 @@ public partial class WarehouseApiContext : DbContext
 
             entity.HasIndex(e => e.CustomerId, "IX_items_customer");
 
+            entity.HasIndex(e => e.ProductId, "IX_items_product");
+
             entity.HasIndex(e => e.QrCode, "UQ__items__E2FB88892F1843CE").IsUnique();
 
             entity.Property(e => e.ItemId).HasColumnName("item_id");
+            entity.Property(e => e.BatchNumber)
+                .HasMaxLength(100)
+                .HasColumnName("batch_number");
             entity.Property(e => e.CreatedAt)
                 .HasDefaultValueSql("(getdate())")
                 .HasColumnName("created_at");
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.ExpiryDate).HasColumnName("expiry_date");
             entity.Property(e => e.Height)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("height");
@@ -211,9 +219,11 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.Length)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("length");
+            entity.Property(e => e.ManufacturingDate).HasColumnName("manufacturing_date");
             entity.Property(e => e.PriorityLevel)
                 .HasDefaultValue(5)
                 .HasColumnName("priority_level");
+            entity.Property(e => e.ProductId).HasColumnName("product_id");
             entity.Property(e => e.QrCode)
                 .HasMaxLength(100)
                 .IsUnicode(false)
@@ -234,6 +244,11 @@ public partial class WarehouseApiContext : DbContext
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_items_customer");
+
+            entity.HasOne(d => d.Product).WithMany(p => p.Items)
+                .HasForeignKey(d => d.ProductId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_items_product");
         });
 
         modelBuilder.Entity<ItemAllocation>(entity =>
@@ -382,6 +397,63 @@ public partial class WarehouseApiContext : DbContext
                 .HasForeignKey(d => d.WarehouseId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_outbound_warehouse");
+        });
+
+        modelBuilder.Entity<Product>(entity =>
+        {
+            entity.HasKey(e => e.ProductId).HasName("PK__products__47027DF5BD8D1B9B");
+
+            entity.ToTable("products", tb => tb.HasTrigger("trg_products_updated_at"));
+
+            entity.HasIndex(e => e.Category, "IX_products_category");
+
+            entity.HasIndex(e => e.ProductCode, "UQ__products__2F4E1BE96A82C8D3").IsUnique();
+
+            entity.Property(e => e.ProductId).HasColumnName("product_id");
+            entity.Property(e => e.Category)
+                .HasMaxLength(100)
+                .HasColumnName("category");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.Description).HasColumnName("description");
+            entity.Property(e => e.IsFragile)
+                .HasDefaultValue(false)
+                .HasColumnName("is_fragile");
+            entity.Property(e => e.IsHazardous)
+                .HasDefaultValue(false)
+                .HasColumnName("is_hazardous");
+            entity.Property(e => e.ProductCode)
+                .HasMaxLength(100)
+                .IsUnicode(false)
+                .HasColumnName("product_code");
+            entity.Property(e => e.ProductName)
+                .HasMaxLength(300)
+                .HasColumnName("product_name");
+            entity.Property(e => e.StandardHeight)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("standard_height");
+            entity.Property(e => e.StandardLength)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("standard_length");
+            entity.Property(e => e.StandardWeight)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("standard_weight");
+            entity.Property(e => e.StandardWidth)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("standard_width");
+            entity.Property(e => e.Status)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasDefaultValue("active")
+                .HasColumnName("status");
+            entity.Property(e => e.StorageConditions).HasColumnName("storage_conditions");
+            entity.Property(e => e.Unit)
+                .HasMaxLength(50)
+                .HasColumnName("unit");
+            entity.Property(e => e.UpdatedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("updated_at");
         });
 
         modelBuilder.Entity<Pallet>(entity =>
@@ -563,16 +635,24 @@ public partial class WarehouseApiContext : DbContext
                 .HasNoKey()
                 .ToView("v_item_priority_search");
 
+            entity.Property(e => e.BatchNumber)
+                .HasMaxLength(100)
+                .HasColumnName("batch_number");
+            entity.Property(e => e.Category)
+                .HasMaxLength(100)
+                .HasColumnName("category");
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
             entity.Property(e => e.CustomerName)
                 .HasMaxLength(200)
                 .HasColumnName("customer_name");
+            entity.Property(e => e.ExpiryDate).HasColumnName("expiry_date");
             entity.Property(e => e.InboundDate).HasColumnName("inbound_date");
             entity.Property(e => e.IsHeavy).HasColumnName("is_heavy");
             entity.Property(e => e.ItemId).HasColumnName("item_id");
             entity.Property(e => e.ItemName)
                 .HasMaxLength(300)
                 .HasColumnName("item_name");
+            entity.Property(e => e.ManufacturingDate).HasColumnName("manufacturing_date");
             entity.Property(e => e.PalletBarcode)
                 .HasMaxLength(100)
                 .IsUnicode(false)
@@ -588,6 +668,14 @@ public partial class WarehouseApiContext : DbContext
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("position_z");
             entity.Property(e => e.PriorityLevel).HasColumnName("priority_level");
+            entity.Property(e => e.ProductCode)
+                .HasMaxLength(100)
+                .IsUnicode(false)
+                .HasColumnName("product_code");
+            entity.Property(e => e.ProductId).HasColumnName("product_id");
+            entity.Property(e => e.ProductName)
+                .HasMaxLength(300)
+                .HasColumnName("product_name");
             entity.Property(e => e.QrCode)
                 .HasMaxLength(100)
                 .IsUnicode(false)
@@ -598,6 +686,9 @@ public partial class WarehouseApiContext : DbContext
                 .HasMaxLength(12)
                 .IsUnicode(false)
                 .HasColumnName("storage_position");
+            entity.Property(e => e.Unit)
+                .HasMaxLength(50)
+                .HasColumnName("unit");
             entity.Property(e => e.Weight)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("weight");

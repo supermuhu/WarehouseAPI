@@ -11,6 +11,16 @@ public partial class VItemPrioritySearch
 
     public string ItemName { get; set; } = null!;
 
+    public int ProductId { get; set; }
+
+    public string ProductName { get; set; } = null!;
+
+    public string ProductCode { get; set; } = null!;
+
+    public string? Unit { get; set; }
+
+    public string? Category { get; set; }
+
     public int CustomerId { get; set; }
 
     public string? CustomerName { get; set; }
@@ -38,6 +48,12 @@ public partial class VItemPrioritySearch
     public bool? IsHeavy { get; set; }
 
     public decimal? Weight { get; set; }
+
+    public string? BatchNumber { get; set; }
+
+    public DateOnly? ManufacturingDate { get; set; }
+
+    public DateOnly? ExpiryDate { get; set; }
 
     public DateTime? InboundDate { get; set; }
 
