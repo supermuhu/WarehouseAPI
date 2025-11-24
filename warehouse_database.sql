@@ -150,9 +150,46 @@ CREATE TABLE pallets (
     height DECIMAL(10,2) DEFAULT 0.15, -- Chiều cao pallet chuẩn
     max_weight DECIMAL(10,2) DEFAULT 1000,
     max_stack_height DECIMAL(10,2) DEFAULT 1.5, -- Tối đa 1.5m
+    pallet_type NVARCHAR(50) NULL, -- Loại pallet (Standard, Small, Large, Container, Custom, etc.)
     created_at DATETIME2 DEFAULT GETDATE(),
     status VARCHAR(20) DEFAULT 'available' CHECK (status IN ('available', 'in_use', 'maintenance'))
 );
+GO
+
+-- ===================================
+-- 6.1. BẢNG PALLET TEMPLATES (Mẫu pallet có sẵn)
+-- ===================================
+IF OBJECT_ID('pallet_templates', 'U') IS NOT NULL DROP TABLE pallet_templates;
+GO
+
+CREATE TABLE pallet_templates (
+    template_id INT IDENTITY(1,1) PRIMARY KEY,
+    template_name NVARCHAR(200) NOT NULL,
+    pallet_type NVARCHAR(50) NULL,
+    length DECIMAL(10,2) NOT NULL,
+    width DECIMAL(10,2) NOT NULL,
+    height DECIMAL(10,2) NOT NULL,
+    max_weight DECIMAL(10,2) NOT NULL,
+    max_stack_height DECIMAL(10,2) NOT NULL,
+    description NVARCHAR(MAX) NULL,
+    is_active BIT DEFAULT 1,
+    created_at DATETIME2 DEFAULT GETDATE(),
+    updated_at DATETIME2 DEFAULT GETDATE()
+);
+GO
+
+-- Trigger cập nhật updated_at cho pallet_templates
+CREATE OR ALTER TRIGGER trg_pallet_templates_updated_at
+ON pallet_templates
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    UPDATE pallet_templates
+    SET updated_at = GETDATE()
+    FROM pallet_templates pt
+    INNER JOIN inserted i ON pt.template_id = i.template_id;
+END
 GO
 
 -- ===================================
@@ -200,9 +237,11 @@ CREATE TABLE products (
     is_fragile BIT DEFAULT 0, -- Hàng dễ vỡ
     is_hazardous BIT DEFAULT 0, -- Hàng nguy hiểm
     storage_conditions NVARCHAR(MAX), -- Điều kiện bảo quản
+    create_user INT NULL, -- Người tạo (customer hoặc admin)
     created_at DATETIME2 DEFAULT GETDATE(),
     updated_at DATETIME2 DEFAULT GETDATE(),
-    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive'))
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    CONSTRAINT FK_products_create_user FOREIGN KEY (create_user) REFERENCES accounts(account_id)
 );
 GO
 
@@ -244,6 +283,8 @@ CREATE TABLE items (
     batch_number NVARCHAR(100), -- Số lô
     manufacturing_date DATE, -- Ngày sản xuất
     expiry_date DATE, -- Ngày hết hạn
+    unit_price DECIMAL(18,2) NULL, -- Đơn giá (1 đơn vị)
+    total_amount DECIMAL(18,2) NULL, -- Thành tiền
     created_at DATETIME2 DEFAULT GETDATE(),
     CONSTRAINT FK_items_product FOREIGN KEY (product_id) REFERENCES products(product_id),
     CONSTRAINT FK_items_customer FOREIGN KEY (customer_id) REFERENCES accounts(account_id)
@@ -762,21 +803,56 @@ VALUES
 GO
 
 -- ===================================
--- 6. PALLET (10 pallets)
+-- 6. PALLET TEMPLATES (Mẫu pallet có sẵn)
 -- ===================================
 
-INSERT INTO pallets (barcode, length, width, height, max_weight, max_stack_height, status)
+INSERT INTO pallet_templates (
+    template_name, pallet_type, length, width, height, 
+    max_weight, max_stack_height, description, is_active
+)
 VALUES 
-    ('PLT-000001', 1.20, 1.00, 0.15, 1000, 1.5, 'in_use'),
-    ('PLT-000002', 1.20, 1.00, 0.15, 1000, 1.5, 'in_use'),
-    ('PLT-000003', 1.20, 1.00, 0.15, 1000, 1.5, 'in_use'),
-    ('PLT-000004', 1.20, 1.00, 0.15, 1000, 1.5, 'in_use'),
-    ('PLT-000005', 1.20, 1.00, 0.15, 1000, 1.5, 'in_use'),
-    ('PLT-000006', 1.20, 1.00, 0.15, 1000, 1.5, 'in_use'),
-    ('PLT-000007', 1.20, 1.00, 0.15, 1000, 1.5, 'in_use'),
-    ('PLT-000008', 1.20, 1.00, 0.15, 1000, 1.5, 'in_use'),
-    ('PLT-000009', 1.20, 1.00, 0.15, 1000, 1.5, 'available'),
-    ('PLT-000010', 1.20, 1.00, 0.15, 1000, 1.5, 'available');
+    -- Pallet tiêu chuẩn Châu Âu
+    (N'Pallet tiêu chuẩn 1200x800mm', 'Standard', 1.20, 0.80, 0.15, 1000, 1.5, 
+     N'Pallet tiêu chuẩn Châu Âu, kích thước 1200x800mm, phù hợp cho hầu hết các loại hàng hóa', 1),
+    
+    -- Pallet tiêu chuẩn Mỹ
+    (N'Pallet tiêu chuẩn 1219x1016mm', 'Standard', 1.219, 1.016, 0.15, 1200, 1.5,
+     N'Pallet tiêu chuẩn Mỹ, kích thước 1219x1016mm (48x40 inch)', 1),
+    
+    -- Pallet nhỏ
+    (N'Pallet nhỏ 1000x600mm', 'Small', 1.00, 0.60, 0.15, 500, 1.2,
+     N'Pallet nhỏ, phù hợp cho hàng hóa có kích thước nhỏ hoặc trọng lượng nhẹ', 1),
+    
+    -- Pallet lớn
+    (N'Pallet lớn 1400x1200mm', 'Large', 1.40, 1.20, 0.15, 1500, 1.8,
+     N'Pallet lớn, phù hợp cho hàng hóa có kích thước lớn hoặc trọng lượng nặng', 1),
+    
+    -- Pallet siêu nhỏ
+    (N'Pallet siêu nhỏ 800x600mm', 'Extra Small', 0.80, 0.60, 0.12, 300, 1.0,
+     N'Pallet siêu nhỏ, phù hợp cho hàng hóa nhẹ và nhỏ gọn', 1),
+    
+    -- Pallet chuyên dụng cho container
+    (N'Pallet container 1200x1000mm', 'Container', 1.20, 1.00, 0.15, 1200, 1.5,
+     N'Pallet chuyên dụng cho container, kích thước tối ưu cho vận chuyển', 1);
+
+GO
+
+-- ===================================
+-- 6.1. PALLET (10 pallets)
+-- ===================================
+
+INSERT INTO pallets (barcode, length, width, height, max_weight, max_stack_height, pallet_type, status)
+VALUES 
+    ('PLT-000001', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
+    ('PLT-000002', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
+    ('PLT-000003', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
+    ('PLT-000004', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
+    ('PLT-000005', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
+    ('PLT-000006', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
+    ('PLT-000007', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
+    ('PLT-000008', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
+    ('PLT-000009', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'available'),
+    ('PLT-000010', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'available');
 
 GO
 
@@ -819,45 +895,47 @@ GO
 -- 8. SẢN PHẨM (Products)
 -- ===================================
 
-INSERT INTO products (product_code, product_name, description, unit, category, standard_length, standard_width, standard_height, standard_weight, is_fragile, is_hazardous, storage_conditions, status)
+DECLARE @admin_id_product INT = (SELECT account_id FROM accounts WHERE username = 'admin');
+
+INSERT INTO products (product_code, product_name, description, unit, category, standard_length, standard_width, standard_height, standard_weight, is_fragile, is_hazardous, storage_conditions, create_user, status)
 VALUES 
     -- Điện tử
-    ('PROD-ELEC-001', N'Đồ điện tử Samsung', N'Các sản phẩm điện tử Samsung bao gồm điện thoại, tablet, phụ kiện', N'Thùng', N'Điện tử', 0.50, 0.40, 0.35, 18.5, 1, 0, N'Tránh ẩm, nhiệt độ phòng', 'active'),
-    ('PROD-ELEC-002', N'Linh kiện máy tính', N'Linh kiện máy tính như RAM, ổ cứng, card màn hình', N'Thùng', N'Điện tử', 0.45, 0.40, 0.30, 14.0, 1, 0, N'Tránh ẩm, tĩnh điện', 'active'),
-    ('PROD-ELEC-003', N'Đèn LED', N'Đèn LED chiếu sáng các loại', N'Thùng', N'Điện tử', 0.55, 0.40, 0.30, 12.0, 1, 0, N'Tránh va đập', 'active'),
-    ('PROD-ELEC-004', N'Thiết bị điện', N'Thiết bị điện công nghiệp', N'Thùng', N'Điện tử', 0.50, 0.45, 0.35, 16.5, 0, 0, N'Khô ráo', 'active'),
+    ('PROD-ELEC-001', N'Đồ điện tử Samsung', N'Các sản phẩm điện tử Samsung bao gồm điện thoại, tablet, phụ kiện', N'Thùng', N'Điện tử', 0.50, 0.40, 0.35, 18.5, 1, 0, N'Tránh ẩm, nhiệt độ phòng', @admin_id_product, 'active'),
+    ('PROD-ELEC-002', N'Linh kiện máy tính', N'Linh kiện máy tính như RAM, ổ cứng, card màn hình', N'Thùng', N'Điện tử', 0.45, 0.40, 0.30, 14.0, 1, 0, N'Tránh ẩm, tĩnh điện', @admin_id_product, 'active'),
+    ('PROD-ELEC-003', N'Đèn LED', N'Đèn LED chiếu sáng các loại', N'Thùng', N'Điện tử', 0.55, 0.40, 0.30, 12.0, 1, 0, N'Tránh va đập', @admin_id_product, 'active'),
+    ('PROD-ELEC-004', N'Thiết bị điện', N'Thiết bị điện công nghiệp', N'Thùng', N'Điện tử', 0.50, 0.45, 0.35, 16.5, 0, 0, N'Khô ráo', @admin_id_product, 'active'),
     
     -- Thực phẩm
-    ('PROD-FOOD-001', N'Gạo ST25', N'Gạo ST25 cao cấp', N'Bao 50kg', N'Thực phẩm', 0.80, 0.50, 0.20, 50.0, 0, 0, N'Khô ráo, thoáng mát', 'active'),
-    ('PROD-FOOD-002', N'Thực phẩm đóng hộp', N'Thực phẩm đóng hộp các loại', N'Thùng', N'Thực phẩm', 0.50, 0.40, 0.35, 18.0, 0, 0, N'Nơi khô ráo, tránh ánh sáng', 'active'),
+    ('PROD-FOOD-001', N'Gạo ST25', N'Gạo ST25 cao cấp', N'Bao 50kg', N'Thực phẩm', 0.80, 0.50, 0.20, 50.0, 0, 0, N'Khô ráo, thoáng mát', @admin_id_product, 'active'),
+    ('PROD-FOOD-002', N'Thực phẩm đóng hộp', N'Thực phẩm đóng hộp các loại', N'Thùng', N'Thực phẩm', 0.50, 0.40, 0.35, 18.0, 0, 0, N'Nơi khô ráo, tránh ánh sáng', @admin_id_product, 'active'),
     
     -- Vật liệu xây dựng
-    ('PROD-CONST-001', N'Xi măng', N'Xi măng PCB40', N'Bao 50kg', N'Vật liệu xây dựng', 0.75, 0.48, 0.18, 50.0, 0, 0, N'Tránh ẩm', 'active'),
-    ('PROD-CONST-002', N'Cát xây dựng', N'Cát xây dựng đã sàng', N'Bao 40kg', N'Vật liệu xây dựng', 0.70, 0.45, 0.20, 40.0, 0, 0, N'Bảo quản khô', 'active'),
-    ('PROD-CONST-003', N'Phân bón', N'Phân bón NPK', N'Bao 40kg', N'Vật liệu xây dựng', 0.70, 0.45, 0.18, 40.0, 0, 0, N'Khô ráo, thoáng mát', 'active'),
-    ('PROD-CONST-004', N'Vật liệu xây dựng tổng hợp', N'Các loại vật liệu xây dựng khác', N'Thùng', N'Vật liệu xây dựng', 0.70, 0.55, 0.40, 35.0, 0, 0, N'Bình thường', 'active'),
-    ('PROD-CONST-005', N'Dụng cụ cơ khí', N'Dụng cụ và thiết bị cơ khí', N'Thùng', N'Vật liệu xây dựng', 0.60, 0.50, 0.45, 25.0, 0, 0, N'Khô ráo', 'active'),
+    ('PROD-CONST-001', N'Xi măng', N'Xi măng PCB40', N'Bao 50kg', N'Vật liệu xây dựng', 0.75, 0.48, 0.18, 50.0, 0, 0, N'Tránh ẩm', @admin_id_product, 'active'),
+    ('PROD-CONST-002', N'Cát xây dựng', N'Cát xây dựng đã sàng', N'Bao 40kg', N'Vật liệu xây dựng', 0.70, 0.45, 0.20, 40.0, 0, 0, N'Bảo quản khô', @admin_id_product, 'active'),
+    ('PROD-CONST-003', N'Phân bón', N'Phân bón NPK', N'Bao 40kg', N'Vật liệu xây dựng', 0.70, 0.45, 0.18, 40.0, 0, 0, N'Khô ráo, thoáng mát', @admin_id_product, 'active'),
+    ('PROD-CONST-004', N'Vật liệu xây dựng tổng hợp', N'Các loại vật liệu xây dựng khác', N'Thùng', N'Vật liệu xây dựng', 0.70, 0.55, 0.40, 35.0, 0, 0, N'Bình thường', @admin_id_product, 'active'),
+    ('PROD-CONST-005', N'Dụng cụ cơ khí', N'Dụng cụ và thiết bị cơ khí', N'Thùng', N'Vật liệu xây dựng', 0.60, 0.50, 0.45, 25.0, 0, 0, N'Khô ráo', @admin_id_product, 'active'),
     
     -- Thời trang
-    ('PROD-FASH-001', N'Quần áo xuất khẩu', N'Quần áo may mặc xuất khẩu', N'Thùng', N'Thời trang', 0.60, 0.45, 0.40, 12.0, 0, 0, N'Khô ráo, thoáng mát', 'active'),
-    ('PROD-FASH-002', N'Giày thể thao', N'Giày thể thao các loại', N'Thùng', N'Thời trang', 0.55, 0.40, 0.35, 15.0, 0, 0, N'Tránh ẩm', 'active'),
+    ('PROD-FASH-001', N'Quần áo xuất khẩu', N'Quần áo may mặc xuất khẩu', N'Thùng', N'Thời trang', 0.60, 0.45, 0.40, 12.0, 0, 0, N'Khô ráo, thoáng mát', @admin_id_product, 'active'),
+    ('PROD-FASH-002', N'Giày thể thao', N'Giày thể thao các loại', N'Thùng', N'Thời trang', 0.55, 0.40, 0.35, 15.0, 0, 0, N'Tránh ẩm', @admin_id_product, 'active'),
     
     -- Mỹ phẩm
-    ('PROD-COSM-001', N'Mỹ phẩm cao cấp', N'Mỹ phẩm chăm sóc da cao cấp', N'Thùng', N'Mỹ phẩm', 0.40, 0.35, 0.30, 8.5, 1, 0, N'Nhiệt độ phòng, tránh ánh sáng', 'active'),
+    ('PROD-COSM-001', N'Mỹ phẩm cao cấp', N'Mỹ phẩm chăm sóc da cao cấp', N'Thùng', N'Mỹ phẩm', 0.40, 0.35, 0.30, 8.5, 1, 0, N'Nhiệt độ phòng, tránh ánh sáng', @admin_id_product, 'active'),
     
     -- Đồ chơi
-    ('PROD-TOY-001', N'Đồ chơi trẻ em', N'Đồ chơi an toàn cho trẻ em', N'Thùng', N'Đồ chơi', 0.50, 0.45, 0.40, 10.0, 0, 0, N'Khô ráo', 'active'),
+    ('PROD-TOY-001', N'Đồ chơi trẻ em', N'Đồ chơi an toàn cho trẻ em', N'Thùng', N'Đồ chơi', 0.50, 0.45, 0.40, 10.0, 0, 0, N'Khô ráo', @admin_id_product, 'active'),
     
     -- Văn phòng phẩm
-    ('PROD-STAT-001', N'Sách giáo khoa', N'Sách giáo khoa các cấp', N'Thùng', N'Văn phòng phẩm', 0.50, 0.40, 0.35, 20.0, 0, 0, N'Tránh ẩm', 'active'),
-    ('PROD-STAT-002', N'Văn phòng phẩm', N'Văn phòng phẩm văn phòng', N'Thùng', N'Văn phòng phẩm', 0.45, 0.35, 0.30, 9.0, 0, 0, N'Bình thường', 'active'),
+    ('PROD-STAT-001', N'Sách giáo khoa', N'Sách giáo khoa các cấp', N'Thùng', N'Văn phòng phẩm', 0.50, 0.40, 0.35, 20.0, 0, 0, N'Tránh ẩm', @admin_id_product, 'active'),
+    ('PROD-STAT-002', N'Văn phòng phẩm', N'Văn phòng phẩm văn phòng', N'Thùng', N'Văn phòng phẩm', 0.45, 0.35, 0.30, 9.0, 0, 0, N'Bình thường', @admin_id_product, 'active'),
     
     -- Y tế & Dược phẩm
-    ('PROD-MED-001', N'Thiết bị y tế', N'Thiết bị y tế chuyên dụng', N'Thùng', N'Y tế', 0.40, 0.35, 0.28, 7.5, 1, 0, N'Nhiệt độ 15-25°C, tránh ẩm', 'active'),
-    ('PROD-MED-002', N'Dược phẩm', N'Dược phẩm và thuốc men', N'Thùng', N'Dược phẩm', 0.38, 0.32, 0.25, 6.0, 1, 0, N'Nhiệt độ 2-8°C, tránh ánh sáng', 'active'),
+    ('PROD-MED-001', N'Thiết bị y tế', N'Thiết bị y tế chuyên dụng', N'Thùng', N'Y tế', 0.40, 0.35, 0.28, 7.5, 1, 0, N'Nhiệt độ 15-25°C, tránh ẩm', @admin_id_product, 'active'),
+    ('PROD-MED-002', N'Dược phẩm', N'Dược phẩm và thuốc men', N'Thùng', N'Dược phẩm', 0.38, 0.32, 0.25, 6.0, 1, 0, N'Nhiệt độ 2-8°C, tránh ánh sáng', @admin_id_product, 'active'),
     
     -- Đồ gia dụng
-    ('PROD-HOME-001', N'Đồ gia dụng', N'Đồ gia dụng các loại', N'Thùng', N'Gia dụng', 0.55, 0.45, 0.40, 13.5, 0, 0, N'Bình thường', 'active');
+    ('PROD-HOME-001', N'Đồ gia dụng', N'Đồ gia dụng các loại', N'Thùng', N'Gia dụng', 0.55, 0.45, 0.40, 13.5, 0, 0, N'Bình thường', @admin_id_product, 'active');
 
 GO
 

@@ -33,6 +33,8 @@ public partial class WarehouseApiContext : DbContext
 
     public virtual DbSet<Pallet> Pallets { get; set; }
 
+    public virtual DbSet<PalletTemplate> PalletTemplates { get; set; }
+
     public virtual DbSet<PalletLocation> PalletLocations { get; set; }
 
     public virtual DbSet<Product> Products { get; set; }
@@ -239,6 +241,12 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.Width)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("width");
+            entity.Property(e => e.UnitPrice)
+                .HasColumnType("decimal(18, 2)")
+                .HasColumnName("unit_price");
+            entity.Property(e => e.TotalAmount)
+                .HasColumnType("decimal(18, 2)")
+                .HasColumnName("total_amount");
 
             entity.HasOne(d => d.Customer).WithMany(p => p.Items)
                 .HasForeignKey(d => d.CustomerId)
@@ -454,6 +462,11 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.UpdatedAt)
                 .HasDefaultValueSql("(getdate())")
                 .HasColumnName("updated_at");
+            entity.Property(e => e.CreateUser).HasColumnName("create_user");
+
+            entity.HasOne(d => d.CreateUserNavigation).WithMany()
+                .HasForeignKey(d => d.CreateUser)
+                .HasConstraintName("FK_products_create_user");
         });
 
         modelBuilder.Entity<Pallet>(entity =>
@@ -492,9 +505,53 @@ public partial class WarehouseApiContext : DbContext
                 .IsUnicode(false)
                 .HasDefaultValue("available")
                 .HasColumnName("status");
+            entity.Property(e => e.PalletType)
+                .HasMaxLength(50)
+                .HasColumnName("pallet_type");
             entity.Property(e => e.Width)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("width");
+        });
+
+        modelBuilder.Entity<PalletTemplate>(entity =>
+        {
+            entity.HasKey(e => e.TemplateId).HasName("PK__pallet_templates__TemplateId");
+
+            entity.ToTable("pallet_templates");
+
+            entity.Property(e => e.TemplateId).HasColumnName("template_id");
+            entity.Property(e => e.TemplateName)
+                .HasMaxLength(200)
+                .HasColumnName("template_name");
+            entity.Property(e => e.PalletType)
+                .HasMaxLength(50)
+                .HasColumnName("pallet_type");
+            entity.Property(e => e.Length)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("length");
+            entity.Property(e => e.Width)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("width");
+            entity.Property(e => e.Height)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("height");
+            entity.Property(e => e.MaxWeight)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("max_weight");
+            entity.Property(e => e.MaxStackHeight)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("max_stack_height");
+            entity.Property(e => e.Description)
+                .HasColumnName("description");
+            entity.Property(e => e.IsActive)
+                .HasDefaultValue(true)
+                .HasColumnName("is_active");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("updated_at");
         });
 
         modelBuilder.Entity<PalletLocation>(entity =>

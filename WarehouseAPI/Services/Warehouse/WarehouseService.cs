@@ -249,5 +249,48 @@ namespace WarehouseAPI.Services.Warehouse
                 return new ApiResponse(502, e.Message, null);
             }
         }
+
+        public ApiResponse GetWarehousesByCustomer(int customerId)
+        {
+            try
+            {
+                // Lấy tất cả warehouse_id từ warehouse_zones có customer_id = customerId
+                var warehouseIds = db.WarehouseZones
+                    .Where(z => z.CustomerId == customerId)
+                    .Select(z => z.WarehouseId)
+                    .Distinct()
+                    .ToList();
+
+                if (!warehouseIds.Any())
+                {
+                    return new ApiResponse(200, "Khách hàng chưa thuê kho nào", new List<WarehouseListViewModel>());
+                }
+
+                // Lấy thông tin các warehouse đó
+                var warehouses = db.Warehouses
+                    .Include(w => w.Owner)
+                    .Where(w => warehouseIds.Contains(w.WarehouseId) && w.Status == "active")
+                    .Select(w => new WarehouseListViewModel
+                    {
+                        WarehouseId = w.WarehouseId,
+                        WarehouseName = w.WarehouseName,
+                        OwnerId = w.OwnerId,
+                        OwnerName = w.Owner.FullName,
+                        Length = w.Length,
+                        Width = w.Width,
+                        Height = w.Height,
+                        WarehouseType = w.WarehouseType,
+                        Status = w.Status,
+                        CreatedAt = w.CreatedAt
+                    })
+                    .ToList();
+
+                return new ApiResponse(200, "Lấy danh sách kho đã thuê thành công", warehouses);
+            }
+            catch (Exception e)
+            {
+                return new ApiResponse(502, e.Message, null);
+            }
+        }
     }
 }

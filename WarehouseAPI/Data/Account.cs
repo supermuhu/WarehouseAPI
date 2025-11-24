@@ -40,4 +40,6 @@ public partial class Account
     public virtual ICollection<WarehouseZone> WarehouseZones { get; set; } = new List<WarehouseZone>();
 
     public virtual ICollection<Warehouse> Warehouses { get; set; } = new List<Warehouse>();
+
+    public virtual ICollection<Product> Products { get; set; } = new List<Product>();
 }

@@ -69,21 +69,55 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             IssuerSigningKey = new SymmetricSecurityKey(secretKeyBytes),
             ClockSkew = TimeSpan.Zero
         };
+        // Xử lý token từ header Authorization - chấp nhận cả "Bearer {token}" và "{token}"
+        options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var token = context.Request.Headers["Authorization"].FirstOrDefault();
+                if (!string.IsNullOrEmpty(token))
+                {
+                    // Nếu token không có prefix "Bearer ", sử dụng token trực tiếp
+                    if (!token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                    {
+                        context.Token = token;
+                    }
+                    // Nếu có "Bearer ", middleware sẽ tự động xử lý, không cần làm gì
+                }
+                return Task.CompletedTask;
+            },
+            OnChallenge = context =>
+            {
+                // Tắt www-authenticate header mặc định
+                context.HandleResponse();
+                // Trả về 401 với response body tùy chỉnh
+                context.Response.StatusCode = 401;
+                context.Response.ContentType = "application/json";
+                var response = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    statusCode = 401,
+                    message = "Unauthorized",
+                    error = "Token không hợp lệ hoặc đã hết hạn"
+                });
+                return context.Response.WriteAsync(response);
+            }
+        };
     });
+
+// Cấu hình authorization để cho phép anonymous access mặc định
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = null; // Không yêu cầu authentication mặc định
+});
 
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(myAllowSpecificOrigins,
         builder =>
         {
-            builder.WithOrigins(
-                       "http://localhost:4000",
-                       "http://26.65.103.147:4000",
-                       "http://192.168.1.241:4000"
-                   )
+            builder.AllowAnyOrigin()
                    .AllowAnyHeader()
-                   .AllowAnyMethod()
-                   .AllowCredentials();
+                   .AllowAnyMethod();
         });
 });
 

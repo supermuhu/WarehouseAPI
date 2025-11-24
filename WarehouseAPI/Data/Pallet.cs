@@ -23,6 +23,8 @@ public partial class Pallet
 
     public string? Status { get; set; }
 
+    public string? PalletType { get; set; }
+
     public virtual ICollection<InboundItem> InboundItems { get; set; } = new List<InboundItem>();
 
     public virtual ICollection<ItemAllocation> ItemAllocations { get; set; } = new List<ItemAllocation>();

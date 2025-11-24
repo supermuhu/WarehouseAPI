@@ -8,5 +8,6 @@ namespace WarehouseAPI.Services.Warehouse
         ApiResponse GetWarehouse3DData(int warehouseId, int accountId, string role);
         ApiResponse GetAllWarehouses();
         ApiResponse GetWarehousesByOwner(int ownerId);
+        ApiResponse GetWarehousesByCustomer(int customerId);
     }
 }

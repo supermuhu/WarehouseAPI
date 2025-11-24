@@ -37,6 +37,10 @@ public partial class Product
 
     public string? Status { get; set; }
 
+    public int? CreateUser { get; set; }
+
+    public virtual Account? CreateUserNavigation { get; set; }
+
     public virtual ICollection<Item> Items { get; set; } = new List<Item>();
 }
 

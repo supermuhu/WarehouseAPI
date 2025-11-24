@@ -39,6 +39,10 @@ public partial class Item
 
     public DateOnly? ExpiryDate { get; set; }
 
+    public decimal? UnitPrice { get; set; }
+
+    public decimal? TotalAmount { get; set; }
+
     public DateTime? CreatedAt { get; set; }
 
     public virtual Product Product { get; set; } = null!;
