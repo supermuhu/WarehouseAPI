@@ -143,4 +143,5 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
+//"Warehouse": "Data Source=.\\sqlexpress;Initial Catalog=WarehouseAPI;Integrated Security=True;Trust Server Certificate=True" 
 //Scaffold-DbContext "Name=ConnectionStrings:Warehouse" Microsoft.EntityFrameworkCore.SqlServer -OutputDir Data -f
