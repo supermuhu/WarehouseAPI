@@ -51,10 +51,11 @@ namespace WarehouseAPI.Controllers
                 // Nếu là customer, chỉ lấy products của họ hoặc của admin
                 if (role == "customer")
                 {
-                    // Lấy admin account IDs
+                    // Lấy admin account IDs - sử dụng materialize trước để tránh lỗi mapping
                     var adminIds = _context.Accounts
                         .Where(a => a.Role == "admin")
                         .Select(a => a.AccountId)
+                        .AsEnumerable()
                         .ToList();
 
                     query = query.Where(p => 

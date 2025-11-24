@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace WarehouseAPI.Data;
@@ -31,16 +31,15 @@ public partial class Product
 
     public string? StorageConditions { get; set; }
 
+    public int? CreateUser { get; set; }
+
     public DateTime? CreatedAt { get; set; }
 
     public DateTime? UpdatedAt { get; set; }
 
     public string? Status { get; set; }
 
-    public int? CreateUser { get; set; }
-
     public virtual Account? CreateUserNavigation { get; set; }
 
     public virtual ICollection<Item> Items { get; set; } = new List<Item>();
 }
-

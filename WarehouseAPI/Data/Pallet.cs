@@ -19,11 +19,11 @@ public partial class Pallet
 
     public decimal? MaxStackHeight { get; set; }
 
+    public string? PalletType { get; set; }
+
     public DateTime? CreatedAt { get; set; }
 
     public string? Status { get; set; }
-
-    public string? PalletType { get; set; }
 
     public virtual ICollection<InboundItem> InboundItems { get; set; } = new List<InboundItem>();
 

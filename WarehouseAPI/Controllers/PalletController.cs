@@ -29,7 +29,7 @@ namespace WarehouseAPI.Controllers
             try
             {
                 var templates = _context.PalletTemplates
-                    .Where(t => t.IsActive)
+                    .Where(t => t.IsActive == true)
                     .OrderBy(t => t.TemplateName)
                     .Select(t => new PalletTemplateViewModel
                     {
@@ -42,7 +42,7 @@ namespace WarehouseAPI.Controllers
                         MaxWeight = t.MaxWeight,
                         MaxStackHeight = t.MaxStackHeight,
                         Description = t.Description,
-                        IsActive = t.IsActive
+                        IsActive = t.IsActive ?? false
                     })
                     .ToList();
 
@@ -167,7 +167,7 @@ namespace WarehouseAPI.Controllers
             {
                 // Kiểm tra template có tồn tại và đang hoạt động không
                 var template = _context.PalletTemplates
-                    .FirstOrDefault(t => t.TemplateId == templateId && t.IsActive);
+                    .FirstOrDefault(t => t.TemplateId == templateId && (t.IsActive == true));
 
                 if (template == null)
                 {

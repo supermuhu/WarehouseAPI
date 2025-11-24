@@ -17,7 +17,7 @@ public partial class VItemPrioritySearch
 
     public string ProductCode { get; set; } = null!;
 
-    public string? Unit { get; set; }
+    public string Unit { get; set; } = null!;
 
     public string? Category { get; set; }
 

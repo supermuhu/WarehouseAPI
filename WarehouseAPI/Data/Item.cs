@@ -45,8 +45,6 @@ public partial class Item
 
     public DateTime? CreatedAt { get; set; }
 
-    public virtual Product Product { get; set; } = null!;
-
     public virtual Account Customer { get; set; } = null!;
 
     public virtual ICollection<InboundItem> InboundItems { get; set; } = new List<InboundItem>();
@@ -56,4 +54,6 @@ public partial class Item
     public virtual ICollection<ItemLocationHistory> ItemLocationHistories { get; set; } = new List<ItemLocationHistory>();
 
     public virtual ICollection<OutboundItem> OutboundItems { get; set; } = new List<OutboundItem>();
+
+    public virtual Product Product { get; set; } = null!;
 }

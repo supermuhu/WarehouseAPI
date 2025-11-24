@@ -37,9 +37,9 @@ public partial class Account
 
     public virtual ICollection<OutboundReceipt> OutboundReceiptCustomers { get; set; } = new List<OutboundReceipt>();
 
+    public virtual ICollection<Product> Products { get; set; } = new List<Product>();
+
     public virtual ICollection<WarehouseZone> WarehouseZones { get; set; } = new List<WarehouseZone>();
 
     public virtual ICollection<Warehouse> Warehouses { get; set; } = new List<Warehouse>();
-
-    public virtual ICollection<Product> Products { get; set; } = new List<Product>();
 }
