@@ -184,63 +184,60 @@ namespace WarehouseAPI.Controllers
                         var product = products.First(p => p.ProductId == itemRequest.ProductId);
                         var pallet = pallets.First(p => p.PalletId == itemRequest.PalletId);
 
-                        // Lấy kích thước từ request (nếu có), fallback sang kích thước chuẩn của product, cuối cùng là default
+                        // Kích thước khối hàng trên pallet (stack dimensions)
                         var length = itemRequest.Length ?? product.StandardLength ?? 0.5m;
                         var width = itemRequest.Width ?? product.StandardWidth ?? 0.4m;
                         var height = itemRequest.Height ?? product.StandardHeight ?? 0.3m;
 
-                        // Tạo items cho mỗi quantity
-                        for (int i = 0; i < itemRequest.Quantity; i++)
+                        // Mỗi InboundItemRequest tương ứng 1 Item (1 khối hàng trên 1 pallet)
+                        var qrCode = $"QR-{receiptNumber}-{itemCounter:D4}";
+
+                        // Đảm bảo QR code là duy nhất
+                        while (_context.Items.Any(it => it.QrCode == qrCode))
                         {
-                            var qrCode = $"QR-{receiptNumber}-{itemCounter:D4}";
-                            
-                            // Kiểm tra QR code đã tồn tại chưa
-                            while (_context.Items.Any(it => it.QrCode == qrCode))
-                            {
-                                itemCounter++;
-                                qrCode = $"QR-{receiptNumber}-{itemCounter:D4}";
-                            }
-
-                            var item = new Item
-                            {
-                                QrCode = qrCode,
-                                ProductId = itemRequest.ProductId,
-                                CustomerId = customerId,
-                                ItemName = product.ProductName,
-                                ItemType = "box", // Có thể lấy từ product hoặc để mặc định
-                                Length = length,
-                                Width = width,
-                                Height = height,
-                                Weight = product.StandardWeight,
-                                Shape = "rectangle",
-                                PriorityLevel = 5,
-                                IsHeavy = product.StandardWeight > 20,
-                                IsFragile = product.IsFragile ?? false,
-                                BatchNumber = itemRequest.BatchNumber,
-                                ManufacturingDate = DateOnly.FromDateTime(itemRequest.ManufacturingDate),
-                                ExpiryDate = itemRequest.ExpiryDate.HasValue 
-                                    ? DateOnly.FromDateTime(itemRequest.ExpiryDate.Value) 
-                                    : null,
-                                UnitPrice = itemRequest.UnitPrice,
-                                TotalAmount = itemRequest.TotalAmount / itemRequest.Quantity, // Chia đều cho mỗi item
-                                CreatedAt = DateTime.Now
-                            };
-
-                            _context.Items.Add(item);
-                            _context.SaveChanges();
-
-                            // Tạo inbound_item
-                            var inboundItem = new InboundItem
-                            {
-                                ReceiptId = inboundReceipt.ReceiptId,
-                                ItemId = item.ItemId,
-                                PalletId = itemRequest.PalletId,
-                                Quantity = 1
-                            };
-
-                            _context.InboundItems.Add(inboundItem);
                             itemCounter++;
+                            qrCode = $"QR-{receiptNumber}-{itemCounter:D4}";
                         }
+
+                        var item = new Item
+                        {
+                            QrCode = qrCode,
+                            ProductId = itemRequest.ProductId,
+                            CustomerId = customerId,
+                            ItemName = product.ProductName,
+                            ItemType = "box", // Có thể lấy từ product hoặc để mặc định
+                            Length = length,
+                            Width = width,
+                            Height = height,
+                            Weight = product.StandardWeight,
+                            Shape = "rectangle",
+                            PriorityLevel = 5,
+                            IsHeavy = product.StandardWeight > 20,
+                            IsFragile = product.IsFragile ?? false,
+                            BatchNumber = itemRequest.BatchNumber,
+                            ManufacturingDate = DateOnly.FromDateTime(itemRequest.ManufacturingDate),
+                            ExpiryDate = itemRequest.ExpiryDate.HasValue
+                                ? DateOnly.FromDateTime(itemRequest.ExpiryDate.Value)
+                                : null,
+                            UnitPrice = itemRequest.UnitPrice,          // Đơn giá 1 đơn vị hàng
+                            TotalAmount = itemRequest.TotalAmount,      // Thành tiền cả pallet hàng
+                            CreatedAt = DateTime.Now
+                        };
+
+                        _context.Items.Add(item);
+                        _context.SaveChanges();
+
+                        // Mỗi pallet có 1 inbound_item, Quantity = số đơn vị hàng trên pallet
+                        var inboundItem = new InboundItem
+                        {
+                            ReceiptId = inboundReceipt.ReceiptId,
+                            ItemId = item.ItemId,
+                            PalletId = itemRequest.PalletId,
+                            Quantity = itemRequest.Quantity
+                        };
+
+                        _context.InboundItems.Add(inboundItem);
+                        itemCounter++;
                     }
 
                     _context.SaveChanges();
@@ -284,6 +281,389 @@ namespace WarehouseAPI.Controllers
             {
                 var result = ApiResponse<object>.Fail(
                     $"Lỗi khi tạo yêu cầu gửi hàng: {ex.Message}",
+                    "INTERNAL_ERROR",
+                    null,
+                    500
+                );
+                return StatusCode(500, result);
+            }
+        }
+
+        /// <summary>
+        /// Lấy dữ liệu phục vụ màn hình duyệt yêu cầu (warehouse_owner)
+        /// Bao gồm thông tin pallet, product, kích thước khối hàng và kích thước 1 đơn vị sản phẩm
+        /// </summary>
+        /// <param name="receiptId">ID phiếu inbound</param>
+        [HttpGet("{receiptId}/approval-view")]
+        public IActionResult GetInboundApprovalView(int receiptId)
+        {
+            try
+            {
+                var accountId = Utils.GetCurrentAccountId(User);
+                var role = Utils.GetCurrentRole(User);
+
+                if (accountId == null)
+                {
+                    var errorResult = ApiResponse<InboundApprovalViewModel>.Fail(
+                        "Token không hợp lệ",
+                        "UNAUTHORIZED",
+                        null,
+                        401
+                    );
+                    return Unauthorized(errorResult);
+                }
+
+                var receipt = _context.InboundReceipts
+                    .Include(r => r.Warehouse)
+                    .Include(r => r.Customer)
+                    .Include(r => r.InboundItems)
+                        .ThenInclude(ii => ii.Item)
+                            .ThenInclude(i => i.Product)
+                    .Include(r => r.InboundItems)
+                        .ThenInclude(ii => ii.Pallet)
+                    .FirstOrDefault(r => r.ReceiptId == receiptId);
+
+                if (receipt == null)
+                {
+                    var errorResult = ApiResponse<InboundApprovalViewModel>.Fail(
+                        "Không tìm thấy yêu cầu gửi hàng",
+                        "NOT_FOUND",
+                        null,
+                        404
+                    );
+                    return NotFound(errorResult);
+                }
+
+                // Quyền: customer chỉ xem được yêu cầu của mình, owner/admin xem được kho của họ
+                if (role == "customer" && receipt.CustomerId != accountId.Value)
+                {
+                    var errorResult = ApiResponse<InboundApprovalViewModel>.Fail(
+                        "Bạn không có quyền xem yêu cầu này",
+                        "FORBIDDEN",
+                        null,
+                        403
+                    );
+                    return StatusCode(403, errorResult);
+                }
+
+                var approval = new InboundApprovalViewModel
+                {
+                    ReceiptId = receipt.ReceiptId,
+                    ReceiptNumber = receipt.ReceiptNumber,
+                    WarehouseId = receipt.WarehouseId,
+                    WarehouseName = receipt.Warehouse.WarehouseName,
+                    CustomerId = receipt.CustomerId,
+                    CustomerName = receipt.Customer.FullName,
+                    Status = receipt.Status,
+                    Notes = receipt.Notes,
+                    Items = receipt.InboundItems.Select(ii =>
+                    {
+                        var product = ii.Item.Product;
+                        var pallet = ii.Pallet;
+
+                        // Heuristic xác định hàng bao
+                        var unitLower = product.Unit.ToLower();
+                        var categoryLower = product.Category?.ToLower();
+                        bool isBag = unitLower.Contains("bao") || (categoryLower != null && categoryLower.Contains("bao"));
+
+                        return new InboundApprovalItemViewModel
+                        {
+                            InboundItemId = ii.InboundItemId,
+                            ItemId = ii.ItemId,
+                            PalletId = ii.PalletId,
+                            PalletBarcode = pallet.Barcode,
+                            ProductId = product.ProductId,
+                            ProductCode = product.ProductCode,
+                            ProductName = product.ProductName,
+                            Unit = product.Unit,
+                            Category = product.Category,
+                            Quantity = ii.Quantity ?? 1,
+                            UnitLength = product.StandardLength,
+                            UnitWidth = product.StandardWidth,
+                            UnitHeight = product.StandardHeight,
+                            ItemLength = ii.Item.Length,
+                            ItemWidth = ii.Item.Width,
+                            ItemHeight = ii.Item.Height,
+                            PalletLength = pallet.Length,
+                            PalletWidth = pallet.Width,
+                            PalletHeight = pallet.Height ?? 0.15m,
+                            IsBag = isBag
+                        };
+                    }).ToList()
+                };
+
+                var result = ApiResponse<InboundApprovalViewModel>.Ok(
+                    approval,
+                    "Lấy dữ liệu duyệt yêu cầu thành công"
+                );
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                var result = ApiResponse<InboundApprovalViewModel>.Fail(
+                    $"Lỗi khi lấy dữ liệu duyệt yêu cầu: {ex.Message}",
+                    "INTERNAL_ERROR",
+                    null,
+                    500
+                );
+                return StatusCode(500, result);
+            }
+        }
+
+        /// <summary>
+        /// Duyệt yêu cầu inbound: sắp xếp pallet vào các khu vực của customer và tạo ItemAllocation
+        /// Sau khi duyệt, yêu cầu sẽ chuyển sang trạng thái completed và xuất hiện trong kho 3D
+        /// </summary>
+        /// <param name="receiptId">ID phiếu inbound</param>
+        [HttpPost("{receiptId}/approve")]
+        public IActionResult ApproveInboundRequest(int receiptId)
+        {
+            try
+            {
+                var accountId = Utils.GetCurrentAccountId(User);
+                var role = Utils.GetCurrentRole(User);
+
+                if (accountId == null)
+                {
+                    var errorResult = ApiResponse<object>.Fail(
+                        "Token không hợp lệ",
+                        "UNAUTHORIZED",
+                        null,
+                        401
+                    );
+                    return Unauthorized(errorResult);
+                }
+
+                if (role != "warehouse_owner" && role != "admin")
+                {
+                    var errorResult = ApiResponse<object>.Fail(
+                        "Chỉ chủ kho hoặc admin mới được duyệt yêu cầu",
+                        "FORBIDDEN",
+                        null,
+                        403
+                    );
+                    return StatusCode(403, errorResult);
+                }
+
+                using var transaction = _context.Database.BeginTransaction();
+
+                var receipt = _context.InboundReceipts
+                    .Include(r => r.Warehouse)
+                    .Include(r => r.InboundItems)
+                        .ThenInclude(ii => ii.Item)
+                            .ThenInclude(i => i.Product)
+                    .Include(r => r.InboundItems)
+                        .ThenInclude(ii => ii.Pallet)
+                    .FirstOrDefault(r => r.ReceiptId == receiptId);
+
+                if (receipt == null)
+                {
+                    var errorResult = ApiResponse<object>.Fail(
+                        "Không tìm thấy yêu cầu gửi hàng",
+                        "NOT_FOUND",
+                        null,
+                        404
+                    );
+                    return NotFound(errorResult);
+                }
+
+                if (receipt.Status != "pending")
+                {
+                    var errorResult = ApiResponse<object>.Fail(
+                        "Chỉ có thể duyệt các yêu cầu ở trạng thái pending",
+                        "INVALID_STATUS",
+                        null,
+                        400
+                    );
+                    return BadRequest(errorResult);
+                }
+
+                // Lấy các khu vực thuộc về customer trong kho này
+                var zones = _context.WarehouseZones
+                    .Where(z => z.WarehouseId == receipt.WarehouseId && z.CustomerId == receipt.CustomerId)
+                    .ToList();
+
+                if (!zones.Any())
+                {
+                    var errorResult = ApiResponse<object>.Fail(
+                        "Khách hàng chưa có khu vực nào trong kho để xếp pallet",
+                        "NO_ZONES_FOR_CUSTOMER",
+                        null,
+                        400
+                    );
+                    return BadRequest(errorResult);
+                }
+
+                var zoneIds = zones.Select(z => z.ZoneId).ToList();
+
+                // Các pallet location hiện có trong các zone này
+                var existingLocations = _context.PalletLocations
+                    .Include(pl => pl.Pallet)
+                    .Where(pl => zoneIds.Contains(pl.ZoneId))
+                    .ToList();
+
+                // Các inbound items cần xếp
+                var inboundItems = receipt.InboundItems.ToList();
+
+                // Kiểm tra pallet đã được gán location chưa
+                var inboundPalletIds = inboundItems.Select(ii => ii.PalletId).Distinct().ToList();
+                var alreadyLocated = _context.PalletLocations
+                    .Where(pl => inboundPalletIds.Contains(pl.PalletId))
+                    .Select(pl => pl.PalletId)
+                    .Distinct()
+                    .ToList();
+
+                if (alreadyLocated.Any())
+                {
+                    var errorResult = ApiResponse<object>.Fail(
+                        "Một hoặc nhiều pallet trong yêu cầu đã được xếp trong kho",
+                        "PALLET_ALREADY_ALLOCATED",
+                        null,
+                        400
+                    );
+                    return BadRequest(errorResult);
+                }
+
+                var newLocations = new List<PalletLocation>();
+
+                // Hàm kiểm tra overlap 2 hình chữ nhật trên mặt phẳng XZ
+                bool IsOverlap(decimal x1, decimal z1, decimal l1, decimal w1, decimal x2, decimal z2, decimal l2, decimal w2)
+                {
+                    return x1 < x2 + l2 && x1 + l1 > x2 && z1 < z2 + w2 && z1 + w1 > z2;
+                }
+
+                foreach (var ii in inboundItems)
+                {
+                    var pallet = ii.Pallet;
+                    bool placed = false;
+
+                    foreach (var zone in zones)
+                    {
+                        var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
+                        var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
+
+                        var maxX = zone.PositionX + zone.Length;
+                        var maxZ = zone.PositionZ + zone.Width;
+
+                        if (pallet.Length > zone.Length || pallet.Width > zone.Width)
+                        {
+                            continue;
+                        }
+
+                        var stepX = pallet.Length;
+                        var stepZ = pallet.Width;
+
+                        for (decimal x = zone.PositionX; x + pallet.Length <= maxX && !placed; x += stepX)
+                        {
+                            for (decimal z = zone.PositionZ; z + pallet.Width <= maxZ && !placed; z += stepZ)
+                            {
+                                bool collision = false;
+
+                                foreach (var loc in zoneExisting)
+                                {
+                                    var otherPallet = loc.Pallet;
+                                    if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                            loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                    {
+                                        collision = true;
+                                        break;
+                                    }
+                                }
+
+                                if (collision) continue;
+
+                                foreach (var loc in zoneNew)
+                                {
+                                    var otherPallet = loc.Pallet;
+                                    if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                            loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                    {
+                                        collision = true;
+                                        break;
+                                    }
+                                }
+
+                                if (collision) continue;
+
+                                var location = new PalletLocation
+                                {
+                                    PalletId = pallet.PalletId,
+                                    ZoneId = zone.ZoneId,
+                                    ShelfId = null,
+                                    PositionX = x,
+                                    PositionY = zone.PositionY,
+                                    PositionZ = z,
+                                    StackLevel = 1,
+                                    StackedOnPallet = null,
+                                    IsGround = true,
+                                    AssignedAt = DateTime.Now
+                                };
+
+                                newLocations.Add(location);
+                                _context.PalletLocations.Add(location);
+                                placed = true;
+                            }
+                        }
+
+                        if (placed) break;
+                    }
+
+                    if (!placed)
+                    {
+                        var errorResult = ApiResponse<object>.Fail(
+                            "Không đủ không gian trống trong các khu vực của khách hàng để xếp tất cả pallet",
+                            "NO_SPACE_FOR_PALLET",
+                            null,
+                            400
+                        );
+                        return BadRequest(errorResult);
+                    }
+                }
+
+                // Tạo ItemAllocation đơn giản: mỗi InboundItem tạo 1 allocation cho cả khối hàng trên pallet
+                foreach (var ii in inboundItems)
+                {
+                    var allocation = new ItemAllocation
+                    {
+                        ItemId = ii.ItemId,
+                        PalletId = ii.PalletId,
+                        PositionX = 0,
+                        PositionY = 0,
+                        PositionZ = 0,
+                        AllocatedAt = DateTime.Now
+                    };
+
+                    _context.ItemAllocations.Add(allocation);
+                }
+
+                // Cập nhật trạng thái phiếu
+                receipt.Status = "completed";
+                _context.SaveChanges();
+
+                transaction.Commit();
+
+                var okResult = ApiResponse<object>.Ok(
+                    new { ReceiptId = receipt.ReceiptId, Status = receipt.Status },
+                    "Duyệt yêu cầu và xếp pallet vào kho thành công"
+                );
+
+                return Ok(okResult);
+            }
+            catch (DbUpdateException ex)
+            {
+                var result = ApiResponse<object>.Fail(
+                    $"Lỗi khi duyệt yêu cầu: {ex.InnerException?.Message ?? ex.Message}",
+                    "DATABASE_ERROR",
+                    null,
+                    500
+                );
+                return StatusCode(500, result);
+            }
+            catch (Exception ex)
+            {
+                var result = ApiResponse<object>.Fail(
+                    $"Lỗi khi duyệt yêu cầu: {ex.Message}",
                     "INTERNAL_ERROR",
                     null,
                     500
