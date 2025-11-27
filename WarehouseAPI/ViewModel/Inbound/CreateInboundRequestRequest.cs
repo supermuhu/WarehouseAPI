@@ -39,6 +39,15 @@ public class InboundItemRequest
     [Range(0.01, double.MaxValue, ErrorMessage = "Thành tiền phải lớn hơn 0")]
     public decimal TotalAmount { get; set; }
 
+    [Range(0.01, double.MaxValue, ErrorMessage = "Chiều dài phải lớn hơn 0")]
+    public decimal? Length { get; set; }
+
+    [Range(0.01, double.MaxValue, ErrorMessage = "Chiều rộng phải lớn hơn 0")]
+    public decimal? Width { get; set; }
+
+    [Range(0.01, double.MaxValue, ErrorMessage = "Chiều cao phải lớn hơn 0")]
+    public decimal? Height { get; set; }
+
     public string? BatchNumber { get; set; }
 }
 

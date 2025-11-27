@@ -77,6 +77,24 @@ namespace WarehouseAPI.Controllers
                 var palletIds = request.Items.Select(i => i.PalletId).Distinct().ToList();
                 var productIds = request.Items.Select(i => i.ProductId).Distinct().ToList();
 
+                // Mỗi pallet chỉ được phép gắn một hàng hóa trong một yêu cầu
+                var duplicatePallets = request.Items
+                    .GroupBy(i => i.PalletId)
+                    .Where(g => g.Count() > 1)
+                    .Select(g => g.Key)
+                    .ToList();
+
+                if (duplicatePallets.Any())
+                {
+                    var errorResult = ApiResponse<object>.Fail(
+                        "Mỗi pallet chỉ được phép gắn một hàng hóa trong một yêu cầu",
+                        "DUPLICATE_PALLET_ITEMS",
+                        null,
+                        400
+                    );
+                    return BadRequest(errorResult);
+                }
+
                 // Kiểm tra pallets có tồn tại và available không
                 var pallets = _context.Pallets
                     .Where(p => palletIds.Contains(p.PalletId))
@@ -166,6 +184,11 @@ namespace WarehouseAPI.Controllers
                         var product = products.First(p => p.ProductId == itemRequest.ProductId);
                         var pallet = pallets.First(p => p.PalletId == itemRequest.PalletId);
 
+                        // Lấy kích thước từ request (nếu có), fallback sang kích thước chuẩn của product, cuối cùng là default
+                        var length = itemRequest.Length ?? product.StandardLength ?? 0.5m;
+                        var width = itemRequest.Width ?? product.StandardWidth ?? 0.4m;
+                        var height = itemRequest.Height ?? product.StandardHeight ?? 0.3m;
+
                         // Tạo items cho mỗi quantity
                         for (int i = 0; i < itemRequest.Quantity; i++)
                         {
@@ -185,9 +208,9 @@ namespace WarehouseAPI.Controllers
                                 CustomerId = customerId,
                                 ItemName = product.ProductName,
                                 ItemType = "box", // Có thể lấy từ product hoặc để mặc định
-                                Length = product.StandardLength ?? 0.5m,
-                                Width = product.StandardWidth ?? 0.4m,
-                                Height = product.StandardHeight ?? 0.3m,
+                                Length = length,
+                                Width = width,
+                                Height = height,
                                 Weight = product.StandardWeight,
                                 Shape = "rectangle",
                                 PriorityLevel = 5,
