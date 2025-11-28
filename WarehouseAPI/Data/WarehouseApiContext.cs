@@ -484,6 +484,10 @@ public partial class WarehouseApiContext : DbContext
                 .HasColumnName("stack_level");
             entity.Property(e => e.StackedOnPallet).HasColumnName("stacked_on_pallet");
             entity.Property(e => e.ZoneId).HasColumnName("zone_id");
+            entity.Property(e => e.LocationCode)
+                .HasMaxLength(50)
+                .HasColumnName("location_code")
+                .HasComputedColumnSql("('LOC-' + RIGHT('000000' + CAST([location_id] AS VARCHAR(6)), 6))", stored: true);
 
             entity.HasOne(d => d.Pallet).WithMany(p => p.PalletLocationPallets)
                 .HasForeignKey(d => d.PalletId)

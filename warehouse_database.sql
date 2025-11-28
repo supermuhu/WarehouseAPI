@@ -210,6 +210,8 @@ CREATE TABLE pallet_locations (
     stacked_on_pallet INT, -- ID pallet bên dưới nếu chồng
     is_ground BIT DEFAULT 0,
     assigned_at DATETIME2 DEFAULT GETDATE(),
+    -- Mã vị trí cố định dùng cho QR code, sinh tự động từ location_id
+    location_code AS ('LOC-' + RIGHT('000000' + CAST(location_id AS VARCHAR(6)), 6)) PERSISTED,
     CONSTRAINT FK_pallet_locations_pallet FOREIGN KEY (pallet_id) REFERENCES pallets(pallet_id),
     CONSTRAINT FK_pallet_locations_zone FOREIGN KEY (zone_id) REFERENCES warehouse_zones(zone_id),
     CONSTRAINT FK_pallet_locations_shelf FOREIGN KEY (shelf_id) REFERENCES shelves(shelf_id),

@@ -27,6 +27,8 @@ public partial class PalletLocation
 
     public DateTime? AssignedAt { get; set; }
 
+    public string? LocationCode { get; set; }
+
     public virtual ICollection<ItemLocationHistory> ItemLocationHistories { get; set; } = new List<ItemLocationHistory>();
 
     public virtual Pallet Pallet { get; set; } = null!;

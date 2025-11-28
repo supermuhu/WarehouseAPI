@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using WarehouseAPI.Data;
 using WarehouseAPI.Helpers;
 using WarehouseAPI.ModelView.Common;
@@ -199,13 +200,20 @@ namespace WarehouseAPI.Controllers
                             qrCode = $"QR-{receiptNumber}-{itemCounter:D4}";
                         }
 
+                        // Xác định loại hàng: bao / thùng dựa trên đơn vị
+                        var unitLower = product.Unit.ToLower();
+                        var categoryLower = product.Category?.ToLower();
+                        var itemType = unitLower.Contains("bao") || (categoryLower != null && categoryLower.Contains("bao"))
+                            ? "bag"
+                            : "box";
+
                         var item = new Item
                         {
                             QrCode = qrCode,
                             ProductId = itemRequest.ProductId,
                             CustomerId = customerId,
                             ItemName = product.ProductName,
-                            ItemType = "box", // Có thể lấy từ product hoặc để mặc định
+                            ItemType = itemType,
                             Length = length,
                             Width = width,
                             Height = height,
@@ -412,12 +420,728 @@ namespace WarehouseAPI.Controllers
         }
 
         /// <summary>
+        /// Tính toán layout tối ưu cho các pallet của một phiếu inbound (KHÔNG ghi vào DB).
+        /// Dùng cho bước xem trước / gợi ý trước khi nhấn duyệt.
+        /// Cho phép truyền PreferredLayouts (thứ tự ưu tiên từ viewer 3D).
+        /// </summary>
+        [HttpPost("{receiptId}/optimize-layout")]
+        public IActionResult OptimizeInboundLayout(int receiptId, [FromBody] ApproveInboundLayoutRequest? request)
+        {
+            try
+            {
+                var accountId = Utils.GetCurrentAccountId(User);
+                var role = Utils.GetCurrentRole(User);
+
+                if (accountId == null)
+                {
+                    var errorResult = ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Token không hợp lệ",
+                        "UNAUTHORIZED",
+                        null,
+                        401
+                    );
+                    return Unauthorized(errorResult);
+                }
+
+                if (role != "warehouse_owner" && role != "admin")
+                {
+                    var errorResult = ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Chỉ chủ kho hoặc admin mới được tối ưu layout inbound",
+                        "FORBIDDEN",
+                        null,
+                        403
+                    );
+                    return StatusCode(403, errorResult);
+                }
+
+                var receipt = _context.InboundReceipts
+                    .Include(r => r.Warehouse)
+                    .Include(r => r.InboundItems)
+                        .ThenInclude(ii => ii.Item)
+                            .ThenInclude(i => i.Product)
+                    .Include(r => r.InboundItems)
+                        .ThenInclude(ii => ii.Pallet)
+                    .FirstOrDefault(r => r.ReceiptId == receiptId);
+
+                if (receipt == null)
+                {
+                    var errorResult = ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Không tìm thấy yêu cầu gửi hàng",
+                        "NOT_FOUND",
+                        null,
+                        404
+                    );
+                    return NotFound(errorResult);
+                }
+
+                if (receipt.Status != "pending")
+                {
+                    var errorResult = ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Chỉ có thể tối ưu layout cho các yêu cầu ở trạng thái pending",
+                        "INVALID_STATUS",
+                        null,
+                        400
+                    );
+                    return BadRequest(errorResult);
+                }
+
+                // Lấy các khu vực thuộc về customer trong kho này
+                var zones = _context.WarehouseZones
+                    .Where(z => z.WarehouseId == receipt.WarehouseId && z.CustomerId == receipt.CustomerId)
+                    .ToList();
+
+                if (!zones.Any())
+                {
+                    var errorResult = ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Khách hàng chưa có khu vực nào trong kho để xếp pallet",
+                        "NO_ZONES_FOR_CUSTOMER",
+                        null,
+                        400
+                    );
+                    return BadRequest(errorResult);
+                }
+
+                var zoneIds = zones.Select(z => z.ZoneId).ToList();
+
+                var racks = _context.Racks
+                    .Include(r => r.Shelves)
+                    .Where(r => zoneIds.Contains(r.ZoneId))
+                    .ToList();
+
+                var racksByZone = racks
+                    .GroupBy(r => r.ZoneId)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+
+                // Các pallet location hiện có trong các zone này
+                var existingLocations = _context.PalletLocations
+                    .Include(pl => pl.Pallet)
+                    .Where(pl => zoneIds.Contains(pl.ZoneId))
+                    .ToList();
+
+                // Parse allowed_item_types: nếu null thì set default theo warehouse_type
+                var warehouseType = receipt.Warehouse.WarehouseType.ToLower();
+                List<string> allowedItemTypes;
+
+                if (!string.IsNullOrWhiteSpace(receipt.Warehouse.AllowedItemTypes))
+                {
+                    try
+                    {
+                        allowedItemTypes = JsonSerializer
+                            .Deserialize<List<string>>(receipt.Warehouse.AllowedItemTypes)!
+                            .Select(t => t.ToLower())
+                            .Distinct()
+                            .ToList();
+                    }
+                    catch
+                    {
+                        // Nếu parse lỗi thì fallback theo loại kho
+                        allowedItemTypes = warehouseType switch
+                        {
+                            "small" => new List<string> { "bag" },
+                            "medium" => new List<string> { "bag", "box" },
+                            "large" => new List<string> { "bag", "box", "custom" },
+                            _ => new List<string> { "bag", "box", "custom" }
+                        };
+                    }
+                }
+                else
+                {
+                    allowedItemTypes = warehouseType switch
+                    {
+                        "small" => new List<string> { "bag" },
+                        "medium" => new List<string> { "bag", "box" },
+                        "large" => new List<string> { "bag", "box", "custom" },
+                        _ => new List<string> { "bag", "box", "custom" }
+                    };
+                }
+
+                // Preferred layout từ FE (kéo thả): PalletId -> Priority (số nhỏ = ưu tiên cao)
+                var preferredLayouts = request?.PreferredLayouts ?? new List<PreferredPalletLayoutDto>();
+
+                var preferredDict = preferredLayouts
+                    .GroupBy(p => p.PalletId)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.Min(x => x.Priority ?? 0m)
+                    );
+
+                // Map chi tiết layout FE gửi cho từng pallet (zone/shelf/toạ độ nếu có)
+                var preferredLayoutMap = preferredLayouts
+                    .GroupBy(p => p.PalletId)
+                    .ToDictionary(g => g.Key, g => g.First());
+
+                var forceUsePreferred = request?.ForceUsePreferredLayout ?? false;
+
+                IEnumerable<InboundItem> orderedItems;
+
+                if (forceUsePreferred && preferredDict.Any())
+                {
+                    var preferredItems = receipt.InboundItems
+                        .Where(ii => preferredDict.ContainsKey(ii.PalletId))
+                        .OrderBy(ii => preferredDict[ii.PalletId])
+                        .ToList();
+
+                    var otherItems = receipt.InboundItems
+                        .Where(ii => !preferredDict.ContainsKey(ii.PalletId))
+                        .OrderByDescending(ii => ii.Item.IsHeavy)
+                        .ThenBy(ii => ii.Item.PriorityLevel ?? 5)
+                        .ThenByDescending(ii => ii.Item.Weight ?? 0);
+
+                    orderedItems = preferredItems.Concat(otherItems);
+                }
+                else
+                {
+                    // Hành vi cũ: dùng priority nếu có, sau đó đến trọng lượng/priority level
+                    orderedItems = receipt.InboundItems
+                        .OrderBy(ii => preferredDict.ContainsKey(ii.PalletId) ? preferredDict[ii.PalletId] : 0m)
+                        .ThenByDescending(ii => ii.Item.IsHeavy)
+                        .ThenBy(ii => ii.Item.PriorityLevel ?? 5)
+                        .ThenByDescending(ii => ii.Item.Weight ?? 0);
+                }
+
+                // Các inbound items cần xếp - sau khi áp dụng thứ tự ưu tiên
+                var inboundItems = orderedItems.ToList();
+
+                // Kiểm tra pallet đã được gán location chưa
+                var inboundPalletIds = inboundItems.Select(ii => ii.PalletId).Distinct().ToList();
+                var alreadyLocated = _context.PalletLocations
+                    .Where(pl => inboundPalletIds.Contains(pl.PalletId))
+                    .Select(pl => pl.PalletId)
+                    .Distinct()
+                    .ToList();
+
+                if (alreadyLocated.Any())
+                {
+                    var errorResult = ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Một hoặc nhiều pallet trong yêu cầu đã được xếp trong kho",
+                        "PALLET_ALREADY_ALLOCATED",
+                        null,
+                        400
+                    );
+                    return BadRequest(errorResult);
+                }
+
+                var newLocations = new List<PalletLocation>();
+
+                // Hàm kiểm tra overlap 2 hình chữ nhật trên mặt phẳng XZ
+                bool IsOverlap(decimal x1, decimal z1, decimal l1, decimal w1, decimal x2, decimal z2, decimal l2, decimal w2)
+                {
+                    return x1 < x2 + l2 && x1 + l1 > x2 && z1 < z2 + w2 && z1 + w1 > z2;
+                }
+
+                foreach (var ii in inboundItems)
+                {
+                    var pallet = ii.Pallet;
+
+                    // Rule theo loại hàng & loại kho
+                    var itemType = ii.Item.ItemType?.ToLower() ?? "box";
+                    var itemIsBag = itemType == "bag";
+                    var itemIsBox = itemType == "box";
+
+                    if (!allowedItemTypes.Contains(itemType))
+                    {
+                        var errorResult = ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                            $"Loại hàng '{itemType}' không được phép trong kho này",
+                            "ITEM_TYPE_NOT_ALLOWED_IN_WAREHOUSE",
+                            null,
+                            400
+                        );
+                        return BadRequest(errorResult);
+                    }
+
+                    // Kho small: chỉ chấp nhận hàng bao (rule business rõ ràng)
+                    if (warehouseType == "small" && !itemIsBag)
+                    {
+                        var errorResult = ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                            "Kho loại small chỉ chứa hàng bao",
+                            "WAREHOUSE_SMALL_BAG_ONLY",
+                            null,
+                            400
+                        );
+                        return BadRequest(errorResult);
+                    }
+
+                    // Candidate zones theo loại hàng
+                    // - Hàng bao (bag): chỉ ở zone ground
+                    // - Hàng thùng (box): chỉ ở zone rack
+                    // - Loại khác: cho phép tất cả zone của customer
+                    var candidateZones = itemIsBag
+                        ? zones.Where(z => z.ZoneType == "ground").ToList()
+                        : itemIsBox
+                            ? zones.Where(z => z.ZoneType == "rack").ToList()
+                            : zones;
+
+                    if (!candidateZones.Any())
+                    {
+                        var errorResult = ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                            "Không có khu vực phù hợp trong kho cho loại hàng này",
+                            "NO_COMPATIBLE_ZONES",
+                            null,
+                            400
+                        );
+                        return BadRequest(errorResult);
+                    }
+
+                    bool placed = false;
+
+                    // Nếu FE gửi layout chi tiết (zone/shelf/XZ) và bật forceUsePreferred,
+                    // thử xếp đúng toạ độ này trước khi chạy thuật toán quét chuẩn.
+                    if (forceUsePreferred && preferredLayoutMap.TryGetValue(pallet.PalletId, out var prefLayout))
+                    {
+                        // Hàng box: ưu tiên layout có ZoneId + ShelfId + PositionX/Z trên kệ
+                        if (itemIsBox
+                            && prefLayout.ZoneId.HasValue
+                            && prefLayout.ShelfId.HasValue
+                            && prefLayout.PositionX.HasValue
+                            && prefLayout.PositionZ.HasValue)
+                        {
+                            var zone = candidateZones.FirstOrDefault(z => z.ZoneId == prefLayout.ZoneId.Value);
+                            if (zone != null && racksByZone.TryGetValue(zone.ZoneId, out var zoneRacks) && zoneRacks.Any())
+                            {
+                                var rack = zoneRacks.FirstOrDefault(r => r.Shelves.Any(s => s.ShelfId == prefLayout.ShelfId.Value));
+                                var shelf = rack?.Shelves.FirstOrDefault(s => s.ShelfId == prefLayout.ShelfId.Value);
+
+                                if (rack != null && shelf != null)
+                                {
+                                    var shelfX = rack.PositionX;
+                                    var shelfZ = rack.PositionZ;
+                                    var shelfLength = Math.Min(rack.Length, shelf.Length);
+                                    var shelfWidth = Math.Min(rack.Width, shelf.Width);
+
+                                    var x = prefLayout.PositionX.Value;
+                                    var z = prefLayout.PositionZ.Value;
+
+                                    // Kiểm tra pallet nằm trọn trong mặt kệ
+                                    if (x >= shelfX && x + pallet.Length <= shelfX + shelfLength &&
+                                        z >= shelfZ && z + pallet.Width <= shelfZ + shelfWidth)
+                                    {
+                                        var shelfExisting = existingLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+                                        var shelfNew = newLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+
+                                        bool collision = false;
+
+                                        foreach (var loc in shelfExisting)
+                                        {
+                                            var otherPallet = loc.Pallet;
+                                            if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                    loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                            {
+                                                collision = true;
+                                                break;
+                                            }
+                                        }
+
+                                        if (!collision)
+                                        {
+                                            foreach (var loc in shelfNew)
+                                            {
+                                                var otherPallet = loc.Pallet;
+                                                if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                        loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                                {
+                                                    collision = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+
+                                        if (!collision)
+                                        {
+                                            var location = new PalletLocation
+                                            {
+                                                PalletId = pallet.PalletId,
+                                                ZoneId = zone.ZoneId,
+                                                ShelfId = shelf.ShelfId,
+                                                PositionX = x,
+                                                PositionY = shelf.PositionY,
+                                                PositionZ = z,
+                                                StackLevel = 1,
+                                                StackedOnPallet = null,
+                                                IsGround = false,
+                                                AssignedAt = DateTime.Now
+                                            };
+
+                                            newLocations.Add(location);
+                                            placed = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Hàng không phải box: cho phép FE chỉ zone + PositionX/Z trên mặt ground
+                        else if (!itemIsBox
+                            && prefLayout.ZoneId.HasValue
+                            && prefLayout.PositionX.HasValue
+                            && prefLayout.PositionZ.HasValue)
+                        {
+                            var zone = candidateZones.FirstOrDefault(z => z.ZoneId == prefLayout.ZoneId.Value);
+                            if (zone != null)
+                            {
+                                var maxX = zone.PositionX + zone.Length;
+                                var maxZ = zone.PositionZ + zone.Width;
+
+                                var x = prefLayout.PositionX.Value;
+                                var z = prefLayout.PositionZ.Value;
+
+                                if (x >= zone.PositionX && x + pallet.Length <= maxX &&
+                                    z >= zone.PositionZ && z + pallet.Width <= maxZ)
+                                {
+                                    var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
+                                    var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
+
+                                    bool collision = false;
+
+                                    foreach (var loc in zoneExisting)
+                                    {
+                                        var otherPallet = loc.Pallet;
+                                        if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                        {
+                                            collision = true;
+                                            break;
+                                        }
+                                    }
+
+                                    if (!collision)
+                                    {
+                                        foreach (var loc in zoneNew)
+                                        {
+                                            var otherPallet = loc.Pallet;
+                                            if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                    loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                            {
+                                                collision = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    if (!collision)
+                                    {
+                                        var location = new PalletLocation
+                                        {
+                                            PalletId = pallet.PalletId,
+                                            ZoneId = zone.ZoneId,
+                                            ShelfId = null,
+                                            PositionX = x,
+                                            PositionY = zone.PositionY,
+                                            PositionZ = z,
+                                            StackLevel = 1,
+                                            StackedOnPallet = null,
+                                            IsGround = true,
+                                            AssignedAt = DateTime.Now
+                                        };
+
+                                        newLocations.Add(location);
+                                        placed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (placed)
+                    {
+                        continue;
+                    }
+
+                    if (itemIsBox)
+                    {
+                        foreach (var zone in candidateZones.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX))
+                        {
+                            if (!racksByZone.TryGetValue(zone.ZoneId, out var zoneRacks) || !zoneRacks.Any())
+                            {
+                                continue;
+                            }
+
+                            foreach (var rack in zoneRacks.OrderBy(r => r.PositionZ).ThenBy(r => r.PositionX))
+                            {
+                                foreach (var shelf in rack.Shelves.OrderBy(s => s.ShelfLevel))
+                                {
+                                    var shelfExisting = existingLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+                                    var shelfNew = newLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+
+                                    var shelfX = rack.PositionX;
+                                    var shelfZ = rack.PositionZ;
+                                    var shelfLength = Math.Min(rack.Length, shelf.Length);
+                                    var shelfWidth = Math.Min(rack.Width, shelf.Width);
+
+                                    if (pallet.Length > shelfLength || pallet.Width > shelfWidth)
+                                    {
+                                        continue;
+                                    }
+
+                                    var stepX = pallet.Length;
+                                    var stepZ = pallet.Width;
+
+                                    var maxX = shelfX + shelfLength;
+                                    var maxZ = shelfZ + shelfWidth;
+
+                                    for (decimal x = shelfX; x + pallet.Length <= maxX && !placed; x += stepX)
+                                    {
+                                        for (decimal z = shelfZ; z + pallet.Width <= maxZ && !placed; z += stepZ)
+                                        {
+                                            bool collision = false;
+
+                                            foreach (var loc in shelfExisting)
+                                            {
+                                                var otherPallet = loc.Pallet;
+                                                if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                        loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                                {
+                                                    collision = true;
+                                                    break;
+                                                }
+                                            }
+
+                                            if (collision) continue;
+
+                                            foreach (var loc in shelfNew)
+                                            {
+                                                var otherPallet = loc.Pallet;
+                                                if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                        loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                                {
+                                                    collision = true;
+                                                    break;
+                                                }
+                                            }
+
+                                            if (collision) continue;
+
+                                            var location = new PalletLocation
+                                            {
+                                                PalletId = pallet.PalletId,
+                                                ZoneId = zone.ZoneId,
+                                                ShelfId = shelf.ShelfId,
+                                                PositionX = x,
+                                                PositionY = shelf.PositionY,
+                                                PositionZ = z,
+                                                StackLevel = 1,
+                                                StackedOnPallet = null,
+                                                IsGround = false,
+                                                AssignedAt = DateTime.Now
+                                            };
+
+                                            newLocations.Add(location);
+                                            placed = true;
+                                        }
+                                    }
+
+                                    if (placed) break;
+                                }
+
+                                if (placed) break;
+                            }
+
+                            if (placed) break;
+                        }
+
+                        if (!placed)
+                        {
+                            var errorResult = ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                                "Không đủ không gian trống trong các khu vực của khách hàng để xếp tất cả pallet (kể cả xếp chồng)",
+                                "NO_SPACE_FOR_PALLET",
+                                null,
+                                400
+                            );
+                            return BadRequest(errorResult);
+                        }
+                    }
+                    else
+                    {
+                        foreach (var zone in candidateZones.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX))
+                        {
+                            var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
+                            var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
+
+                            var maxX = zone.PositionX + zone.Length;
+                            var maxZ = zone.PositionZ + zone.Width;
+
+                            if (pallet.Length > zone.Length || pallet.Width > zone.Width)
+                            {
+                                continue;
+                            }
+
+                            var stepX = pallet.Length;
+                            var stepZ = pallet.Width;
+
+                            for (decimal x = zone.PositionX; x + pallet.Length <= maxX && !placed; x += stepX)
+                            {
+                                for (decimal z = zone.PositionZ; z + pallet.Width <= maxZ && !placed; z += stepZ)
+                                {
+                                    bool collision = false;
+
+                                    foreach (var loc in zoneExisting)
+                                    {
+                                        var otherPallet = loc.Pallet;
+                                        if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                        {
+                                            collision = true;
+                                            break;
+                                        }
+                                    }
+
+                                    if (collision) continue;
+
+                                    foreach (var loc in zoneNew)
+                                    {
+                                        var otherPallet = loc.Pallet;
+                                        if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                        {
+                                            collision = true;
+                                            break;
+                                        }
+                                    }
+
+                                    if (collision) continue;
+
+                                    var location = new PalletLocation
+                                    {
+                                        PalletId = pallet.PalletId,
+                                        ZoneId = zone.ZoneId,
+                                        ShelfId = null,
+                                        PositionX = x,
+                                        PositionY = zone.PositionY,
+                                        PositionZ = z,
+                                        StackLevel = 1,
+                                        StackedOnPallet = null,
+                                        IsGround = true,
+                                        AssignedAt = DateTime.Now
+                                    };
+
+                                    newLocations.Add(location);
+                                    placed = true;
+                                }
+                            }
+
+                            if (placed) break;
+                        }
+
+                        if (!placed)
+                        {
+                            bool stacked = false;
+
+                            foreach (var zone in candidateZones.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX))
+                            {
+                                var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId && l.IsGround == true && l.StackLevel == 1).ToList();
+                                var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId && l.IsGround == true && l.StackLevel == 1).ToList();
+
+                                foreach (var baseLoc in zoneExisting.Concat(zoneNew))
+                                {
+                                    var basePallet = baseLoc.Pallet;
+
+                                    if (pallet.Length > basePallet.Length || pallet.Width > basePallet.Width)
+                                    {
+                                        continue;
+                                    }
+
+                                    bool hasTop = existingLocations.Any(l => l.StackedOnPallet == basePallet.PalletId)
+                                        || newLocations.Any(l => l.StackedOnPallet == basePallet.PalletId);
+
+                                    if (hasTop)
+                                    {
+                                        continue;
+                                    }
+
+                                    var baseHeight = basePallet.Height ?? 0.15m;
+                                    var newHeight = pallet.Height ?? 0.15m;
+                                    var totalPalletHeight = baseHeight + newHeight;
+
+                                    var baseMaxStack = basePallet.MaxStackHeight ?? 1.5m;
+                                    var newMaxStack = pallet.MaxStackHeight ?? 1.5m;
+                                    var allowedStackHeight = Math.Min(baseMaxStack, newMaxStack);
+
+                                    if (totalPalletHeight > 1.5m || totalPalletHeight > allowedStackHeight)
+                                    {
+                                        continue;
+                                    }
+
+                                    var stackedLocation = new PalletLocation
+                                    {
+                                        PalletId = pallet.PalletId,
+                                        ZoneId = baseLoc.ZoneId,
+                                        ShelfId = baseLoc.ShelfId,
+                                        PositionX = baseLoc.PositionX,
+                                        PositionY = baseLoc.PositionY + baseHeight,
+                                        PositionZ = baseLoc.PositionZ,
+                                        StackLevel = 2,
+                                        StackedOnPallet = basePallet.PalletId,
+                                        IsGround = false,
+                                        AssignedAt = DateTime.Now
+                                    };
+
+                                    newLocations.Add(stackedLocation);
+                                    stacked = true;
+                                    break;
+                                }
+
+                                if (stacked) break;
+                            }
+
+                            if (!stacked)
+                            {
+                                var errorResult = ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                                    "Không đủ không gian trống trong các khu vực của khách hàng để xếp tất cả pallet (kể cả xếp chồng)",
+                                    "NO_SPACE_FOR_PALLET",
+                                    null,
+                                    400
+                                );
+                                return BadRequest(errorResult);
+                            }
+                        }
+                    }
+                }
+
+                var response = new InboundOptimizeLayoutViewModel
+                {
+                    ReceiptId = receipt.ReceiptId,
+                    WarehouseId = receipt.WarehouseId,
+                    CustomerId = receipt.CustomerId,
+                    Layouts = newLocations.Select(l => new InboundOptimizeLayoutItemViewModel
+                    {
+                        PalletId = l.PalletId,
+                        ZoneId = l.ZoneId,
+                        ShelfId = l.ShelfId,
+                        PositionX = l.PositionX,
+                        PositionY = l.PositionY,
+                        PositionZ = l.PositionZ,
+                        StackLevel = l.StackLevel ?? 1,
+                        StackedOnPalletId = l.StackedOnPallet,
+                        IsGround = l.IsGround ?? false
+                    }).ToList()
+                };
+
+                var okResult = ApiResponse<InboundOptimizeLayoutViewModel>.Ok(
+                    response,
+                    "Tính toán layout tối ưu thành công"
+                );
+
+                return Ok(okResult);
+            }
+            catch (Exception ex)
+            {
+                var result = ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                    $"Lỗi khi tối ưu layout inbound: {ex.Message}",
+                    "INTERNAL_ERROR",
+                    null,
+                    500
+                );
+                return StatusCode(500, result);
+            }
+        }
+
+        /// <summary>
         /// Duyệt yêu cầu inbound: sắp xếp pallet vào các khu vực của customer và tạo ItemAllocation
-        /// Sau khi duyệt, yêu cầu sẽ chuyển sang trạng thái completed và xuất hiện trong kho 3D
+        /// Sau khi duyệt, yêu cầu sẽ chuyển sang trạng thái completed và xuất hiện trong kho 3D.
+        /// Có thể truyền thêm PreferredLayouts để ưu tiên thứ tự xếp pallet (từ viewer 3D).
         /// </summary>
         /// <param name="receiptId">ID phiếu inbound</param>
+        /// <param name="request">Tuỳ chọn: ưu tiên layout cho từng pallet</param>
         [HttpPost("{receiptId}/approve")]
-        public IActionResult ApproveInboundRequest(int receiptId)
+        public IActionResult ApproveInboundRequest(int receiptId, [FromBody] ApproveInboundLayoutRequest? request)
         {
             try
             {
@@ -497,14 +1221,104 @@ namespace WarehouseAPI.Controllers
 
                 var zoneIds = zones.Select(z => z.ZoneId).ToList();
 
+                var racks = _context.Racks
+                    .Include(r => r.Shelves)
+                    .Where(r => zoneIds.Contains(r.ZoneId))
+                    .ToList();
+
+                var racksByZone = racks
+                    .GroupBy(r => r.ZoneId)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+
                 // Các pallet location hiện có trong các zone này
                 var existingLocations = _context.PalletLocations
                     .Include(pl => pl.Pallet)
                     .Where(pl => zoneIds.Contains(pl.ZoneId))
                     .ToList();
 
-                // Các inbound items cần xếp
-                var inboundItems = receipt.InboundItems.ToList();
+                // Parse allowed_item_types: nếu null thì set default theo warehouse_type
+                var warehouseType = receipt.Warehouse.WarehouseType.ToLower();
+                List<string> allowedItemTypes;
+
+                if (!string.IsNullOrWhiteSpace(receipt.Warehouse.AllowedItemTypes))
+                {
+                    try
+                    {
+                        allowedItemTypes = JsonSerializer
+                            .Deserialize<List<string>>(receipt.Warehouse.AllowedItemTypes)!
+                            .Select(t => t.ToLower())
+                            .Distinct()
+                            .ToList();
+                    }
+                    catch
+                    {
+                        // Nếu parse lỗi thì fallback theo loại kho
+                        allowedItemTypes = warehouseType switch
+                        {
+                            "small" => new List<string> { "bag" },
+                            "medium" => new List<string> { "bag", "box" },
+                            "large" => new List<string> { "bag", "box", "custom" },
+                            _ => new List<string> { "bag", "box", "custom" }
+                        };
+                    }
+                }
+                else
+                {
+                    allowedItemTypes = warehouseType switch
+                    {
+                        "small" => new List<string> { "bag" },
+                        "medium" => new List<string> { "bag", "box" },
+                        "large" => new List<string> { "bag", "box", "custom" },
+                        _ => new List<string> { "bag", "box", "custom" }
+                    };
+                }
+
+                // Preferred layout từ FE (kéo thả): PalletId -> Priority (số nhỏ = ưu tiên cao)
+                var preferredLayouts = request?.PreferredLayouts ?? new List<PreferredPalletLayoutDto>();
+
+                var preferredDict = preferredLayouts
+                    .GroupBy(p => p.PalletId)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.Min(x => x.Priority ?? 0m)
+                    );
+
+                // Map chi tiết layout FE gửi cho từng pallet (zone/shelf/toạ độ nếu có)
+                var preferredLayoutMap = preferredLayouts
+                    .GroupBy(p => p.PalletId)
+                    .ToDictionary(g => g.Key, g => g.First());
+
+                var forceUsePreferred = request?.ForceUsePreferredLayout ?? false;
+
+                IEnumerable<InboundItem> orderedItems;
+
+                if (forceUsePreferred && preferredDict.Any())
+                {
+                    var preferredItems = receipt.InboundItems
+                        .Where(ii => preferredDict.ContainsKey(ii.PalletId))
+                        .OrderBy(ii => preferredDict[ii.PalletId])
+                        .ToList();
+
+                    var otherItems = receipt.InboundItems
+                        .Where(ii => !preferredDict.ContainsKey(ii.PalletId))
+                        .OrderByDescending(ii => ii.Item.IsHeavy)
+                        .ThenBy(ii => ii.Item.PriorityLevel ?? 5)
+                        .ThenByDescending(ii => ii.Item.Weight ?? 0);
+
+                    orderedItems = preferredItems.Concat(otherItems);
+                }
+                else
+                {
+                    // Hành vi cũ: dùng priority nếu có, sau đó đến trọng lượng/priority level
+                    orderedItems = receipt.InboundItems
+                        .OrderBy(ii => preferredDict.ContainsKey(ii.PalletId) ? preferredDict[ii.PalletId] : 0m)
+                        .ThenByDescending(ii => ii.Item.IsHeavy)
+                        .ThenBy(ii => ii.Item.PriorityLevel ?? 5)
+                        .ThenByDescending(ii => ii.Item.Weight ?? 0);
+                }
+
+                // Các inbound items cần xếp - sau khi áp dụng thứ tự ưu tiên
+                var inboundItems = orderedItems.ToList();
 
                 // Kiểm tra pallet đã được gán location chưa
                 var inboundPalletIds = inboundItems.Select(ii => ii.PalletId).Distinct().ToList();
@@ -536,88 +1350,471 @@ namespace WarehouseAPI.Controllers
                 foreach (var ii in inboundItems)
                 {
                     var pallet = ii.Pallet;
-                    bool placed = false;
 
-                    foreach (var zone in zones)
-                    {
-                        var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
-                        var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
+                    // Rule theo loại hàng & loại kho
+                    var itemType = ii.Item.ItemType?.ToLower() ?? "box";
+                    var itemIsBag = itemType == "bag";
+                    var itemIsBox = itemType == "box";
 
-                        var maxX = zone.PositionX + zone.Length;
-                        var maxZ = zone.PositionZ + zone.Width;
-
-                        if (pallet.Length > zone.Length || pallet.Width > zone.Width)
-                        {
-                            continue;
-                        }
-
-                        var stepX = pallet.Length;
-                        var stepZ = pallet.Width;
-
-                        for (decimal x = zone.PositionX; x + pallet.Length <= maxX && !placed; x += stepX)
-                        {
-                            for (decimal z = zone.PositionZ; z + pallet.Width <= maxZ && !placed; z += stepZ)
-                            {
-                                bool collision = false;
-
-                                foreach (var loc in zoneExisting)
-                                {
-                                    var otherPallet = loc.Pallet;
-                                    if (IsOverlap(x, z, pallet.Length, pallet.Width,
-                                            loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
-                                    {
-                                        collision = true;
-                                        break;
-                                    }
-                                }
-
-                                if (collision) continue;
-
-                                foreach (var loc in zoneNew)
-                                {
-                                    var otherPallet = loc.Pallet;
-                                    if (IsOverlap(x, z, pallet.Length, pallet.Width,
-                                            loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
-                                    {
-                                        collision = true;
-                                        break;
-                                    }
-                                }
-
-                                if (collision) continue;
-
-                                var location = new PalletLocation
-                                {
-                                    PalletId = pallet.PalletId,
-                                    ZoneId = zone.ZoneId,
-                                    ShelfId = null,
-                                    PositionX = x,
-                                    PositionY = zone.PositionY,
-                                    PositionZ = z,
-                                    StackLevel = 1,
-                                    StackedOnPallet = null,
-                                    IsGround = true,
-                                    AssignedAt = DateTime.Now
-                                };
-
-                                newLocations.Add(location);
-                                _context.PalletLocations.Add(location);
-                                placed = true;
-                            }
-                        }
-
-                        if (placed) break;
-                    }
-
-                    if (!placed)
+                    if (!allowedItemTypes.Contains(itemType))
                     {
                         var errorResult = ApiResponse<object>.Fail(
-                            "Không đủ không gian trống trong các khu vực của khách hàng để xếp tất cả pallet",
-                            "NO_SPACE_FOR_PALLET",
+                            $"Loại hàng '{itemType}' không được phép trong kho này",
+                            "ITEM_TYPE_NOT_ALLOWED_IN_WAREHOUSE",
                             null,
                             400
                         );
                         return BadRequest(errorResult);
+                    }
+
+                    // Kho small: chỉ chấp nhận hàng bao (rule business rõ ràng)
+                    if (warehouseType == "small" && !itemIsBag)
+                    {
+                        var errorResult = ApiResponse<object>.Fail(
+                            "Kho loại small chỉ chứa hàng bao",
+                            "WAREHOUSE_SMALL_BAG_ONLY",
+                            null,
+                            400
+                        );
+                        return BadRequest(errorResult);
+                    }
+
+                    // Candidate zones theo loại hàng
+                    // - Hàng bao (bag): chỉ ở zone ground
+                    // - Hàng thùng (box): chỉ ở zone rack
+                    // - Loại khác: cho phép tất cả zone của customer
+                    var candidateZones = itemIsBag
+                        ? zones.Where(z => z.ZoneType == "ground").ToList()
+                        : itemIsBox
+                            ? zones.Where(z => z.ZoneType == "rack").ToList()
+                            : zones;
+
+                    if (!candidateZones.Any())
+                    {
+                        var errorResult = ApiResponse<object>.Fail(
+                            "Không có khu vực phù hợp trong kho cho loại hàng này",
+                            "NO_COMPATIBLE_ZONES",
+                            null,
+                            400
+                        );
+                        return BadRequest(errorResult);
+                    }
+                    bool placed = false;
+
+                    // Nếu FE gửi layout chi tiết (zone/shelf/XZ) và bật forceUsePreferred,
+                    // thử xếp đúng toạ độ này trước khi chạy thuật toán quét chuẩn.
+                    if (forceUsePreferred && preferredLayoutMap.TryGetValue(pallet.PalletId, out var prefLayout))
+                    {
+                        // Hàng box: ưu tiên layout có ZoneId + ShelfId + PositionX/Z trên kệ
+                        if (itemIsBox
+                            && prefLayout.ZoneId.HasValue
+                            && prefLayout.ShelfId.HasValue
+                            && prefLayout.PositionX.HasValue
+                            && prefLayout.PositionZ.HasValue)
+                        {
+                            var zone = candidateZones.FirstOrDefault(z => z.ZoneId == prefLayout.ZoneId.Value);
+                            if (zone != null && racksByZone.TryGetValue(zone.ZoneId, out var zoneRacks) && zoneRacks.Any())
+                            {
+                                var rack = zoneRacks.FirstOrDefault(r => r.Shelves.Any(s => s.ShelfId == prefLayout.ShelfId.Value));
+                                var shelf = rack?.Shelves.FirstOrDefault(s => s.ShelfId == prefLayout.ShelfId.Value);
+
+                                if (rack != null && shelf != null)
+                                {
+                                    var shelfX = rack.PositionX;
+                                    var shelfZ = rack.PositionZ;
+                                    var shelfLength = Math.Min(rack.Length, shelf.Length);
+                                    var shelfWidth = Math.Min(rack.Width, shelf.Width);
+
+                                    var x = prefLayout.PositionX.Value;
+                                    var z = prefLayout.PositionZ.Value;
+
+                                    // Kiểm tra pallet nằm trọn trong mặt kệ
+                                    if (x >= shelfX && x + pallet.Length <= shelfX + shelfLength &&
+                                        z >= shelfZ && z + pallet.Width <= shelfZ + shelfWidth)
+                                    {
+                                        var shelfExisting = existingLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+                                        var shelfNew = newLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+
+                                        bool collision = false;
+
+                                        foreach (var loc in shelfExisting)
+                                        {
+                                            var otherPallet = loc.Pallet;
+                                            if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                    loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                            {
+                                                collision = true;
+                                                break;
+                                            }
+                                        }
+
+                                        if (!collision)
+                                        {
+                                            foreach (var loc in shelfNew)
+                                            {
+                                                var otherPallet = loc.Pallet;
+                                                if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                        loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                                {
+                                                    collision = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+
+                                        if (!collision)
+                                        {
+                                            var location = new PalletLocation
+                                            {
+                                                PalletId = pallet.PalletId,
+                                                ZoneId = zone.ZoneId,
+                                                ShelfId = shelf.ShelfId,
+                                                PositionX = x,
+                                                PositionY = shelf.PositionY,
+                                                PositionZ = z,
+                                                StackLevel = 1,
+                                                StackedOnPallet = null,
+                                                IsGround = false,
+                                                AssignedAt = DateTime.Now
+                                            };
+
+                                            newLocations.Add(location);
+                                            _context.PalletLocations.Add(location);
+                                            placed = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Hàng không phải box: cho phép FE chỉ zone + PositionX/Z trên mặt ground
+                        else if (!itemIsBox
+                            && prefLayout.ZoneId.HasValue
+                            && prefLayout.PositionX.HasValue
+                            && prefLayout.PositionZ.HasValue)
+                        {
+                            var zone = candidateZones.FirstOrDefault(z => z.ZoneId == prefLayout.ZoneId.Value);
+                            if (zone != null)
+                            {
+                                var maxX = zone.PositionX + zone.Length;
+                                var maxZ = zone.PositionZ + zone.Width;
+
+                                var x = prefLayout.PositionX.Value;
+                                var z = prefLayout.PositionZ.Value;
+
+                                if (x >= zone.PositionX && x + pallet.Length <= maxX &&
+                                    z >= zone.PositionZ && z + pallet.Width <= maxZ)
+                                {
+                                    var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
+                                    var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
+
+                                    bool collision = false;
+
+                                    foreach (var loc in zoneExisting)
+                                    {
+                                        var otherPallet = loc.Pallet;
+                                        if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                        {
+                                            collision = true;
+                                            break;
+                                        }
+                                    }
+
+                                    if (!collision)
+                                    {
+                                        foreach (var loc in zoneNew)
+                                        {
+                                            var otherPallet = loc.Pallet;
+                                            if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                    loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                            {
+                                                collision = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    if (!collision)
+                                    {
+                                        var location = new PalletLocation
+                                        {
+                                            PalletId = pallet.PalletId,
+                                            ZoneId = zone.ZoneId,
+                                            ShelfId = null,
+                                            PositionX = x,
+                                            PositionY = zone.PositionY,
+                                            PositionZ = z,
+                                            StackLevel = 1,
+                                            StackedOnPallet = null,
+                                            IsGround = true,
+                                            AssignedAt = DateTime.Now
+                                        };
+
+                                        newLocations.Add(location);
+                                        _context.PalletLocations.Add(location);
+                                        placed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (placed)
+                    {
+                        continue;
+                    }
+
+                    if (itemIsBox)
+                    {
+                        foreach (var zone in candidateZones.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX))
+                        {
+                            if (!racksByZone.TryGetValue(zone.ZoneId, out var zoneRacks) || !zoneRacks.Any())
+                            {
+                                continue;
+                            }
+
+                            foreach (var rack in zoneRacks.OrderBy(r => r.PositionZ).ThenBy(r => r.PositionX))
+                            {
+                                foreach (var shelf in rack.Shelves.OrderBy(s => s.ShelfLevel))
+                                {
+                                    var shelfExisting = existingLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+                                    var shelfNew = newLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+
+                                    var shelfX = rack.PositionX;
+                                    var shelfZ = rack.PositionZ;
+                                    var shelfLength = Math.Min(rack.Length, shelf.Length);
+                                    var shelfWidth = Math.Min(rack.Width, shelf.Width);
+
+                                    if (pallet.Length > shelfLength || pallet.Width > shelfWidth)
+                                    {
+                                        continue;
+                                    }
+
+                                    var stepX = pallet.Length;
+                                    var stepZ = pallet.Width;
+
+                                    var maxX = shelfX + shelfLength;
+                                    var maxZ = shelfZ + shelfWidth;
+
+                                    for (decimal x = shelfX; x + pallet.Length <= maxX && !placed; x += stepX)
+                                    {
+                                        for (decimal z = shelfZ; z + pallet.Width <= maxZ && !placed; z += stepZ)
+                                        {
+                                            bool collision = false;
+
+                                            foreach (var loc in shelfExisting)
+                                            {
+                                                var otherPallet = loc.Pallet;
+                                                if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                        loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                                {
+                                                    collision = true;
+                                                    break;
+                                                }
+                                            }
+
+                                            if (collision) continue;
+
+                                            foreach (var loc in shelfNew)
+                                            {
+                                                var otherPallet = loc.Pallet;
+                                                if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                        loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                                {
+                                                    collision = true;
+                                                    break;
+                                                }
+                                            }
+
+                                            if (collision) continue;
+
+                                            var location = new PalletLocation
+                                            {
+                                                PalletId = pallet.PalletId,
+                                                ZoneId = zone.ZoneId,
+                                                ShelfId = shelf.ShelfId,
+                                                PositionX = x,
+                                                PositionY = shelf.PositionY,
+                                                PositionZ = z,
+                                                StackLevel = 1,
+                                                StackedOnPallet = null,
+                                                IsGround = false,
+                                                AssignedAt = DateTime.Now
+                                            };
+
+                                            newLocations.Add(location);
+                                            _context.PalletLocations.Add(location);
+                                            placed = true;
+                                        }
+                                    }
+
+                                    if (placed) break;
+                                }
+
+                                if (placed) break;
+                            }
+
+                            if (placed) break;
+                        }
+
+                        if (!placed)
+                        {
+                            var errorResult = ApiResponse<object>.Fail(
+                                "Không đủ không gian trống trong các khu vực của khách hàng để xếp tất cả pallet (kể cả xếp chồng)",
+                                "NO_SPACE_FOR_PALLET",
+                                null,
+                                400
+                            );
+                            return BadRequest(errorResult);
+                        }
+                    }
+                    else
+                    {
+                        foreach (var zone in candidateZones.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX))
+                        {
+                            var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
+                            var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
+
+                            var maxX = zone.PositionX + zone.Length;
+                            var maxZ = zone.PositionZ + zone.Width;
+
+                            if (pallet.Length > zone.Length || pallet.Width > zone.Width)
+                            {
+                                continue;
+                            }
+
+                            var stepX = pallet.Length;
+                            var stepZ = pallet.Width;
+
+                            for (decimal x = zone.PositionX; x + pallet.Length <= maxX && !placed; x += stepX)
+                            {
+                                for (decimal z = zone.PositionZ; z + pallet.Width <= maxZ && !placed; z += stepZ)
+                                {
+                                    bool collision = false;
+
+                                    foreach (var loc in zoneExisting)
+                                    {
+                                        var otherPallet = loc.Pallet;
+                                        if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                        {
+                                            collision = true;
+                                            break;
+                                        }
+                                    }
+
+                                    if (collision) continue;
+
+                                    foreach (var loc in zoneNew)
+                                    {
+                                        var otherPallet = loc.Pallet;
+                                        if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                        {
+                                            collision = true;
+                                            break;
+                                        }
+                                    }
+
+                                    if (collision) continue;
+
+                                    var location = new PalletLocation
+                                    {
+                                        PalletId = pallet.PalletId,
+                                        ZoneId = zone.ZoneId,
+                                        ShelfId = null,
+                                        PositionX = x,
+                                        PositionY = zone.PositionY,
+                                        PositionZ = z,
+                                        StackLevel = 1,
+                                        StackedOnPallet = null,
+                                        IsGround = true,
+                                        AssignedAt = DateTime.Now
+                                    };
+
+                                    newLocations.Add(location);
+                                    _context.PalletLocations.Add(location);
+                                    placed = true;
+                                }
+                            }
+
+                            if (placed) break;
+                        }
+
+                        if (!placed)
+                        {
+                            bool stacked = false;
+
+                            foreach (var zone in candidateZones.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX))
+                            {
+                                var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId && l.IsGround == true && l.StackLevel == 1).ToList();
+                                var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId && l.IsGround == true && l.StackLevel == 1).ToList();
+
+                                foreach (var baseLoc in zoneExisting.Concat(zoneNew))
+                                {
+                                    var basePallet = baseLoc.Pallet;
+
+                                    if (pallet.Length > basePallet.Length || pallet.Width > basePallet.Width)
+                                    {
+                                        continue;
+                                    }
+
+                                    bool hasTop = existingLocations.Any(l => l.StackedOnPallet == basePallet.PalletId)
+                                        || newLocations.Any(l => l.StackedOnPallet == basePallet.PalletId);
+
+                                    if (hasTop)
+                                    {
+                                        continue;
+                                    }
+
+                                    var baseHeight = basePallet.Height ?? 0.15m;
+                                    var newHeight = pallet.Height ?? 0.15m;
+                                    var totalPalletHeight = baseHeight + newHeight;
+
+                                    var baseMaxStack = basePallet.MaxStackHeight ?? 1.5m;
+                                    var newMaxStack = pallet.MaxStackHeight ?? 1.5m;
+                                    var allowedStackHeight = Math.Min(baseMaxStack, newMaxStack);
+
+                                    if (totalPalletHeight > 1.5m || totalPalletHeight > allowedStackHeight)
+                                    {
+                                        continue;
+                                    }
+
+                                    var stackedLocation = new PalletLocation
+                                    {
+                                        PalletId = pallet.PalletId,
+                                        ZoneId = baseLoc.ZoneId,
+                                        ShelfId = baseLoc.ShelfId,
+                                        PositionX = baseLoc.PositionX,
+                                        PositionY = baseLoc.PositionY + baseHeight,
+                                        PositionZ = baseLoc.PositionZ,
+                                        StackLevel = 2,
+                                        StackedOnPallet = basePallet.PalletId,
+                                        // Đặt trên nền nhưng là tầng 2 => không còn là ground level trực tiếp
+                                        IsGround = false,
+                                        AssignedAt = DateTime.Now
+                                    };
+
+                                    newLocations.Add(stackedLocation);
+                                    _context.PalletLocations.Add(stackedLocation);
+                                    stacked = true;
+                                    break;
+                                }
+
+                                if (stacked) break;
+                            }
+
+                            if (!stacked)
+                            {
+                                var errorResult = ApiResponse<object>.Fail(
+                                    "Không đủ không gian trống trong các khu vực của khách hàng để xếp tất cả pallet (kể cả xếp chồng)",
+                                    "NO_SPACE_FOR_PALLET",
+                                    null,
+                                    400
+                                );
+                                return BadRequest(errorResult);
+                            }
+                        }
                     }
                 }
 

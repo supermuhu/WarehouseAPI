@@ -9,5 +9,12 @@ namespace WarehouseAPI.Services.Warehouse
         ApiResponse GetAllWarehouses();
         ApiResponse GetWarehousesByOwner(int ownerId);
         ApiResponse GetWarehousesByCustomer(int customerId);
+
+        // Rack management by zone
+        ApiResponse GetZoneRacks(int zoneId, int accountId, string role);
+        ApiResponse CreateRack(int zoneId, int accountId, string role, CreateRackRequest request);
+        ApiResponse UpdateRack(int zoneId, int rackId, int accountId, string role, UpdateRackRequest request);
+        ApiResponse BulkUpdateRackPositions(int zoneId, int accountId, string role, BulkUpdateRackPositionsRequest request);
+        ApiResponse DeleteRack(int zoneId, int rackId, int accountId, string role);
     }
 }

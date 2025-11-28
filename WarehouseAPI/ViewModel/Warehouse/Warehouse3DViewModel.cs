@@ -97,6 +97,7 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public int LocationId { get; set; }
         public int PalletId { get; set; }
         public string? Barcode { get; set; }
+        public string? LocationCode { get; set; }
         public int ZoneId { get; set; }
         public int? ShelfId { get; set; }
         public decimal PositionX { get; set; }
@@ -127,6 +128,9 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public string? ProductName { get; set; }
         public string? Unit { get; set; }
         public string? Category { get; set; }
+        public decimal? StandardLength { get; set; }
+        public decimal? StandardWidth { get; set; }
+        public decimal? StandardHeight { get; set; }
         
         // Customer information
         public int CustomerId { get; set; }
