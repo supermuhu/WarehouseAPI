@@ -1,6 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using WarehouseAPI.Services.Auth;
 using WarehouseAPI.Services.Warehouse;
+using WarehouseAPI.Services.Inbound;
+using WarehouseAPI.Services.Pallet;
+using WarehouseAPI.Services.Product;
 
 namespace WarehouseAPI.ProgramConfig
 {
@@ -13,6 +16,15 @@ namespace WarehouseAPI.ProgramConfig
 
             // Warehouse services
             services.AddScoped<IWarehouseService, WarehouseService>();
+
+            // Inbound services
+            services.AddScoped<IInboundService, InboundService>();
+
+            // Pallet services
+            services.AddScoped<IPalletService, PalletService>();
+
+            // Product services
+            services.AddScoped<IProductService, ProductService>();
         }
         
         public static void AddSingleton(this IServiceCollection services)
