@@ -56,6 +56,37 @@ namespace WarehouseAPI.Services.Inbound
                     customerId = accountId.Value; // Tạm thời dùng accountId
                 }
 
+                // Xác định khu vực (zone) nếu FE gửi lên
+                WarehouseZone? selectedZone = null;
+
+                if (request.ZoneId.HasValue)
+                {
+                    selectedZone = _context.WarehouseZones
+                        .FirstOrDefault(z => z.ZoneId == request.ZoneId.Value
+                                          && z.WarehouseId == request.WarehouseId
+                                          && z.CustomerId == customerId);
+
+                    if (selectedZone == null)
+                    {
+                        return ApiResponse<object>.Fail(
+                            "Khu vực được chọn không hợp lệ cho khách hàng trong kho này",
+                            "INVALID_ZONE_FOR_CUSTOMER",
+                            null,
+                            400
+                        );
+                    }
+                }
+                else if (role == "customer")
+                {
+                    // Customer bắt buộc phải chọn rõ khu vực để hệ thống áp dụng rule theo từng zone
+                    return ApiResponse<object>.Fail(
+                        "Vui lòng chọn khu vực trong kho để tạo yêu cầu nhập",
+                        "MISSING_ZONE_FOR_CUSTOMER",
+                        null,
+                        400
+                    );
+                }
+
                 // Validate các items
                 var palletIds = request.Items.Select(i => i.PalletId).Distinct().ToList();
                 var productIds = request.Items.Select(i => i.ProductId).Distinct().ToList();
@@ -143,6 +174,7 @@ namespace WarehouseAPI.Services.Inbound
                     var inboundReceipt = new InboundReceipt
                     {
                         WarehouseId = request.WarehouseId,
+                        ZoneId = selectedZone?.ZoneId,
                         CustomerId = customerId,
                         ReceiptNumber = receiptNumber,
                         TotalItems = totalItems,
@@ -316,12 +348,23 @@ namespace WarehouseAPI.Services.Inbound
                     );
                 }
 
+                string? zoneName = null;
+                if (receipt.ZoneId.HasValue)
+                {
+                    zoneName = _context.WarehouseZones
+                        .Where(z => z.ZoneId == receipt.ZoneId.Value)
+                        .Select(z => z.ZoneName)
+                        .FirstOrDefault();
+                }
+
                 var approval = new InboundApprovalViewModel
                 {
                     ReceiptId = receipt.ReceiptId,
                     ReceiptNumber = receipt.ReceiptNumber,
                     WarehouseId = receipt.WarehouseId,
                     WarehouseName = receipt.Warehouse.WarehouseName,
+                    ZoneId = receipt.ZoneId,
+                    ZoneName = zoneName,
                     CustomerId = receipt.CustomerId,
                     CustomerName = receipt.Customer.FullName,
                     Status = receipt.Status,
@@ -432,9 +475,16 @@ namespace WarehouseAPI.Services.Inbound
                 }
 
                 // Lấy các khu vực thuộc về customer trong kho này
-                var zones = _context.WarehouseZones
-                    .Where(z => z.WarehouseId == receipt.WarehouseId && z.CustomerId == receipt.CustomerId)
-                    .ToList();
+                // Nếu phiếu đã gắn với một Zone cụ thể, chỉ lấy đúng zone đó
+                var zonesQuery = _context.WarehouseZones
+                    .Where(z => z.WarehouseId == receipt.WarehouseId && z.CustomerId == receipt.CustomerId);
+
+                if (receipt.ZoneId.HasValue)
+                {
+                    zonesQuery = zonesQuery.Where(z => z.ZoneId == receipt.ZoneId.Value);
+                }
+
+                var zones = zonesQuery.ToList();
 
                 if (!zones.Any())
                 {
@@ -456,6 +506,25 @@ namespace WarehouseAPI.Services.Inbound
                 var racksByZone = racks
                     .GroupBy(r => r.ZoneId)
                     .ToDictionary(g => g.Key, g => g.ToList());
+
+                // Nếu có hàng thùng (box) nhưng không có rack nào trong các khu vực của customer thì không cho duyệt
+                bool hasBoxItems = receipt.InboundItems.Any(ii =>
+                {
+                    var t = ii.Item.ItemType?.ToLower() ?? "box";
+                    return t == "box";
+                });
+
+                bool hasAnyRack = racks.Any();
+
+                if (hasBoxItems && !hasAnyRack)
+                {
+                    return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Khách hàng chưa có rack trong các khu vực kho để xếp hàng thùng (box)",
+                        "NO_RACK_FOR_BOX_ITEMS",
+                        null,
+                        400
+                    );
+                }
 
                 // Các pallet location hiện có trong các zone này
                 var existingLocations = _context.PalletLocations
@@ -604,14 +673,12 @@ namespace WarehouseAPI.Services.Inbound
                     }
 
                     // Candidate zones theo loại hàng
-                    // - Hàng bao (bag): chỉ ở zone ground
+                    // - Hàng bao (bag): có thể ở ground hoặc rack (tất cả zone của customer)
                     // - Hàng thùng (box): chỉ ở zone rack
                     // - Loại khác: cho phép tất cả zone của customer
-                    var candidateZones = itemIsBag
-                        ? zones.Where(z => z.ZoneType == "ground").ToList()
-                        : itemIsBox
-                            ? zones.Where(z => z.ZoneType == "rack").ToList()
-                            : zones;
+                    var candidateZones = itemIsBox
+                        ? zones.Where(z => z.ZoneType == "rack").ToList()
+                        : zones;
 
                     if (!candidateZones.Any())
                     {
@@ -1128,9 +1195,16 @@ namespace WarehouseAPI.Services.Inbound
 
                 // Logic tương tự OptimizeInboundLayout nhưng lưu vào database
                 // Lấy các khu vực thuộc về customer trong kho này
-                var zones = _context.WarehouseZones
-                    .Where(z => z.WarehouseId == receipt.WarehouseId && z.CustomerId == receipt.CustomerId)
-                    .ToList();
+                // Nếu phiếu đã gắn với một Zone cụ thể, chỉ lấy đúng zone đó
+                var zonesQuery = _context.WarehouseZones
+                    .Where(z => z.WarehouseId == receipt.WarehouseId && z.CustomerId == receipt.CustomerId);
+
+                if (receipt.ZoneId.HasValue)
+                {
+                    zonesQuery = zonesQuery.Where(z => z.ZoneId == receipt.ZoneId.Value);
+                }
+
+                var zones = zonesQuery.ToList();
 
                 if (!zones.Any())
                 {
@@ -1288,11 +1362,9 @@ namespace WarehouseAPI.Services.Inbound
                         );
                     }
 
-                    var candidateZones = itemIsBag
-                        ? zones.Where(z => z.ZoneType == "ground").ToList()
-                        : itemIsBox
-                            ? zones.Where(z => z.ZoneType == "rack").ToList()
-                            : zones;
+                    var candidateZones = itemIsBox
+                        ? zones.Where(z => z.ZoneType == "rack").ToList()
+                        : zones;
 
                     if (!candidateZones.Any())
                     {
@@ -1726,14 +1798,32 @@ namespace WarehouseAPI.Services.Inbound
                     query = query.Where(r => r.Status == status);
                 }
 
-                var requests = query
+                var baseReceipts = query
                     .OrderByDescending(r => r.InboundDate)
+                    .ToList();
+
+                // Lấy tên zone tương ứng (nếu có)
+                var zoneIdList = baseReceipts
+                    .Where(r => r.ZoneId.HasValue)
+                    .Select(r => r.ZoneId!.Value)
+                    .Distinct()
+                    .ToList();
+
+                var zonesDict = _context.WarehouseZones
+                    .Where(z => zoneIdList.Contains(z.ZoneId))
+                    .ToDictionary(z => z.ZoneId, z => z.ZoneName);
+
+                var requests = baseReceipts
                     .Select(r => new InboundRequestListViewModel
                     {
                         ReceiptId = r.ReceiptId,
                         ReceiptNumber = r.ReceiptNumber,
                         WarehouseId = r.WarehouseId,
                         WarehouseName = r.Warehouse.WarehouseName,
+                        ZoneId = r.ZoneId,
+                        ZoneName = r.ZoneId.HasValue && zonesDict.ContainsKey(r.ZoneId.Value)
+                            ? zonesDict[r.ZoneId.Value]
+                            : null,
                         CustomerId = r.CustomerId,
                         CustomerName = r.Customer.FullName,
                         TotalItems = r.TotalItems,
@@ -1807,12 +1897,23 @@ namespace WarehouseAPI.Services.Inbound
                     );
                 }
 
+                string? zoneName = null;
+                if (receipt.ZoneId.HasValue)
+                {
+                    zoneName = _context.WarehouseZones
+                        .Where(z => z.ZoneId == receipt.ZoneId.Value)
+                        .Select(z => z.ZoneName)
+                        .FirstOrDefault();
+                }
+
                 var detail = new InboundRequestDetailViewModel
                 {
                     ReceiptId = receipt.ReceiptId,
                     ReceiptNumber = receipt.ReceiptNumber,
                     WarehouseId = receipt.WarehouseId,
                     WarehouseName = receipt.Warehouse.WarehouseName,
+                    ZoneId = receipt.ZoneId,
+                    ZoneName = zoneName,
                     CustomerId = receipt.CustomerId,
                     CustomerName = receipt.Customer.FullName,
                     TotalItems = receipt.TotalItems,

@@ -9,6 +9,8 @@ public partial class InboundReceipt
 
     public int WarehouseId { get; set; }
 
+    public int? ZoneId { get; set; }
+
     public int CustomerId { get; set; }
 
     public string ReceiptNumber { get; set; } = null!;

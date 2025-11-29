@@ -37,6 +37,9 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public string? WarehouseType { get; set; }
         public string? Status { get; set; }
         public DateTime? CreatedAt { get; set; }
+        public int? ZoneId { get; set; }
+        public string? ZoneName { get; set; }
+        public string? ZoneType { get; set; }
     }
 
     /// <summary>

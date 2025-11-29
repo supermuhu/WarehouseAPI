@@ -164,6 +164,7 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.TotalItems).HasColumnName("total_items");
             entity.Property(e => e.TotalPallets).HasColumnName("total_pallets");
             entity.Property(e => e.WarehouseId).HasColumnName("warehouse_id");
+            entity.Property(e => e.ZoneId).HasColumnName("zone_id");
 
             entity.HasOne(d => d.CreatedByNavigation).WithMany(p => p.InboundReceiptCreatedByNavigations)
                 .HasForeignKey(d => d.CreatedBy)

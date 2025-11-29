@@ -7,6 +7,12 @@ public class CreateInboundRequestRequest
     [Required(ErrorMessage = "WarehouseId là bắt buộc")]
     public int WarehouseId { get; set; }
 
+    /// <summary>
+    /// Zone cụ thể trong kho mà yêu cầu này hướng tới. Nếu null, BE sẽ xử lý trên tất cả khu vực của customer.
+    /// Đối với customer, nên luôn gửi ZoneId để nghiệp vụ áp dụng đúng khu vực được chọn.
+    /// </summary>
+    public int? ZoneId { get; set; }
+
     [Required(ErrorMessage = "Danh sách hàng hóa là bắt buộc")]
     [MinLength(1, ErrorMessage = "Phải có ít nhất 1 hàng hóa")]
     public List<InboundItemRequest> Items { get; set; } = new List<InboundItemRequest>();

@@ -6,6 +6,8 @@ public class InboundRequestDetailViewModel
     public string ReceiptNumber { get; set; } = string.Empty;
     public int WarehouseId { get; set; }
     public string? WarehouseName { get; set; }
+    public int? ZoneId { get; set; }
+    public string? ZoneName { get; set; }
     public int CustomerId { get; set; }
     public string? CustomerName { get; set; }
     public int TotalItems { get; set; }

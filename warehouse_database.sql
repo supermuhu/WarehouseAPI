@@ -321,6 +321,7 @@ GO
 CREATE TABLE inbound_receipts (
     receipt_id INT IDENTITY(1,1) PRIMARY KEY,
     warehouse_id INT NOT NULL,
+    zone_id INT NULL,
     customer_id INT NOT NULL,
     receipt_number VARCHAR(100) UNIQUE NOT NULL,
     total_items INT NOT NULL,
@@ -331,12 +332,13 @@ CREATE TABLE inbound_receipts (
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
     CONSTRAINT FK_inbound_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses(warehouse_id),
     CONSTRAINT FK_inbound_customer FOREIGN KEY (customer_id) REFERENCES accounts(account_id),
-    CONSTRAINT FK_inbound_created_by FOREIGN KEY (created_by) REFERENCES accounts(account_id)
+    CONSTRAINT FK_inbound_created_by FOREIGN KEY (created_by) REFERENCES accounts(account_id),
+    CONSTRAINT FK_inbound_zone FOREIGN KEY (zone_id) REFERENCES warehouse_zones(zone_id)
 );
 GO
 
 -- ===================================
--- 11. CHI TIẾT PHIẾU NHẬP
+-- 12. BẢNG CHI TIẾT PHIẾU NHẬP
 -- ===================================
 IF OBJECT_ID('inbound_items', 'U') IS NOT NULL DROP TABLE inbound_items;
 GO
@@ -715,6 +717,7 @@ INSERT INTO warehouse_zones (warehouse_id, zone_name, customer_id, position_x, p
 VALUES 
     (@warehouse1_id, N'Khu A - Khách Lan', @customer_a_id, 5.0, 0.0, 5.0, 15.0, 12.0, 8.0, 'ground'),
     (@warehouse1_id, N'Khu B - Khách Hùng', @customer_b_id, 25.0, 0.0, 5.0, 15.0, 12.0, 8.0, 'ground'),
+    (@warehouse1_id, N'Khu B Rack - Khách Hùng', @customer_b_id, 25.0, 0.0, 20.0, 15.0, 8.0, 8.0, 'rack'),
     (@warehouse1_id, N'Khu C - Khách Mai', @customer_c_id, 45.0, 0.0, 5.0, 15.0, 12.0, 8.0, 'rack');
 
 -- Kho 2: Chia 2 khu
@@ -737,6 +740,7 @@ GO
 -- ===================================
 
 DECLARE @zone_c_id INT = (SELECT zone_id FROM warehouse_zones WHERE zone_name LIKE N'%Khu C%');
+DECLARE @zone_b_rack_id INT = (SELECT zone_id FROM warehouse_zones WHERE zone_name LIKE N'%Khu B Rack%');
 DECLARE @zone_e_id INT = (SELECT zone_id FROM warehouse_zones WHERE zone_name LIKE N'%Khu E%');
 
 -- Kệ cho Khu C
@@ -745,6 +749,12 @@ VALUES
     (@zone_c_id, N'Kệ C1', 46.0, 0.0, 6.0, 4.0, 1.5, 6.0, 4),
     (@zone_c_id, N'Kệ C2', 51.0, 0.0, 6.0, 4.0, 1.5, 6.0, 4),
     (@zone_c_id, N'Kệ C3', 56.0, 0.0, 6.0, 4.0, 1.5, 6.0, 4);
+
+-- Kệ cho Khu B Rack - Khách Hùng
+INSERT INTO racks (zone_id, rack_name, position_x, position_y, position_z, length, width, height, max_shelves)
+VALUES 
+    (@zone_b_rack_id, N'Kệ B1', 26.0, 0.0, 21.0, 4.0, 1.5, 6.0, 3),
+    (@zone_b_rack_id, N'Kệ B2', 31.0, 0.0, 21.0, 4.0, 1.5, 6.0, 3);
 
 -- Kệ cho Khu E
 INSERT INTO racks (zone_id, rack_name, position_x, position_y, position_z, length, width, height, max_shelves)
@@ -761,6 +771,8 @@ GO
 DECLARE @rack_c1_id INT = (SELECT rack_id FROM racks WHERE rack_name = N'Kệ C1');
 DECLARE @rack_c2_id INT = (SELECT rack_id FROM racks WHERE rack_name = N'Kệ C2');
 DECLARE @rack_c3_id INT = (SELECT rack_id FROM racks WHERE rack_name = N'Kệ C3');
+DECLARE @rack_b1_id INT = (SELECT rack_id FROM racks WHERE rack_name = N'Kệ B1');
+DECLARE @rack_b2_id INT = (SELECT rack_id FROM racks WHERE rack_name = N'Kệ B2');
 DECLARE @rack_e1_id INT = (SELECT rack_id FROM racks WHERE rack_name = N'Kệ E1');
 DECLARE @rack_e2_id INT = (SELECT rack_id FROM racks WHERE rack_name = N'Kệ E2');
 
@@ -787,6 +799,16 @@ VALUES
     (@rack_c3_id, 2, 2.0, 4.0, 1.5, 400),
     (@rack_c3_id, 3, 3.5, 4.0, 1.5, 300),
     (@rack_c3_id, 4, 5.0, 4.0, 1.5, 200);
+
+-- Tầng cho Kệ B1/B2 (Khu B Rack - Khách Hùng)
+INSERT INTO shelves (rack_id, shelf_level, position_y, length, width, max_weight)
+VALUES 
+    (@rack_b1_id, 1, 0.5, 4.0, 1.5, 500),
+    (@rack_b1_id, 2, 2.0, 4.0, 1.5, 400),
+    (@rack_b1_id, 3, 3.5, 4.0, 1.5, 300),
+    (@rack_b2_id, 1, 0.5, 4.0, 1.5, 500),
+    (@rack_b2_id, 2, 2.0, 4.0, 1.5, 400),
+    (@rack_b2_id, 3, 3.5, 4.0, 1.5, 300);
 
 -- Tầng cho Kệ E1 (3 tầng)
 INSERT INTO shelves (rack_id, shelf_level, position_y, length, width, max_weight)
@@ -857,13 +879,12 @@ VALUES
     ('PLT-000010', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'available');
 
 GO
-
 -- ===================================
 -- 7. VỊ TRÍ PALLET
 -- ===================================
 
 DECLARE @zone_a_id INT = (SELECT zone_id FROM warehouse_zones WHERE zone_name LIKE N'%Khu A%');
-DECLARE @zone_b_id INT = (SELECT zone_id FROM warehouse_zones WHERE zone_name LIKE N'%Khu B%');
+DECLARE @zone_b_id INT = (SELECT zone_id FROM warehouse_zones WHERE zone_name = N'Khu B - Khách Hùng');
 DECLARE @zone_c_id_loc INT = (SELECT zone_id FROM warehouse_zones WHERE zone_name LIKE N'%Khu C%');
 DECLARE @zone_d_id INT = (SELECT zone_id FROM warehouse_zones WHERE zone_name LIKE N'%Khu D%');
 

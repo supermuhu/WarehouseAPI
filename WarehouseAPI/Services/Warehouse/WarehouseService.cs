@@ -258,34 +258,33 @@ namespace WarehouseAPI.Services.Warehouse
         {
             try
             {
-                // Lấy tất cả warehouse_id từ warehouse_zones có customer_id = customerId
-                var warehouseIds = db.WarehouseZones
-                    .Where(z => z.CustomerId == customerId)
-                    .Select(z => z.WarehouseId)
-                    .Distinct()
+                var zones = db.WarehouseZones
+                    .Include(z => z.Warehouse)
+                        .ThenInclude(w => w.Owner)
+                    .Where(z => z.CustomerId == customerId && z.Warehouse.Status == "active")
                     .ToList();
 
-                if (!warehouseIds.Any())
+                if (!zones.Any())
                 {
                     return new ApiResponse(200, "Khách hàng chưa thuê kho nào", new List<WarehouseListViewModel>());
                 }
 
-                // Lấy thông tin các warehouse đó
-                var warehouses = db.Warehouses
-                    .Include(w => w.Owner)
-                    .Where(w => warehouseIds.Contains(w.WarehouseId) && w.Status == "active")
-                    .Select(w => new WarehouseListViewModel
+                var warehouses = zones
+                    .Select(z => new WarehouseListViewModel
                     {
-                        WarehouseId = w.WarehouseId,
-                        WarehouseName = w.WarehouseName,
-                        OwnerId = w.OwnerId,
-                        OwnerName = w.Owner.FullName,
-                        Length = w.Length,
-                        Width = w.Width,
-                        Height = w.Height,
-                        WarehouseType = w.WarehouseType,
-                        Status = w.Status,
-                        CreatedAt = w.CreatedAt
+                        WarehouseId = z.WarehouseId,
+                        WarehouseName = z.Warehouse.WarehouseName,
+                        OwnerId = z.Warehouse.OwnerId,
+                        OwnerName = z.Warehouse.Owner.FullName,
+                        Length = z.Warehouse.Length,
+                        Width = z.Warehouse.Width,
+                        Height = z.Warehouse.Height,
+                        WarehouseType = z.Warehouse.WarehouseType,
+                        Status = z.Warehouse.Status,
+                        CreatedAt = z.Warehouse.CreatedAt,
+                        ZoneId = z.ZoneId,
+                        ZoneName = z.ZoneName,
+                        ZoneType = z.ZoneType
                     })
                     .ToList();
 
