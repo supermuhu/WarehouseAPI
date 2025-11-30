@@ -46,7 +46,39 @@ BEGIN
 END
 GO
 
--- ===================================
+-- 1.1. DỮ LIỆU TÀI KHOẢN MẪU
+IF NOT EXISTS (SELECT 1 FROM accounts WHERE username = 'admin')
+BEGIN
+    INSERT INTO accounts (username, password_hash, full_name, email, phone, role, status)
+    VALUES ('admin', 'admin123', N'Quản trị hệ thống', 'admin@example.com', '0900000000', 'admin', 'active');
+END
+
+IF NOT EXISTS (SELECT 1 FROM accounts WHERE username = 'chukhoa')
+BEGIN
+    INSERT INTO accounts (username, password_hash, full_name, email, phone, role, status)
+    VALUES ('chukhoa', 'owner123', N'Chủ kho', 'owner@example.com', '0900000001', 'warehouse_owner', 'active');
+END
+
+IF NOT EXISTS (SELECT 1 FROM accounts WHERE username = 'customer_a')
+BEGIN
+    INSERT INTO accounts (username, password_hash, full_name, email, phone, role, status)
+    VALUES ('customer_a', 'cust123', N'Khách hàng A - Lan', 'customer_a@example.com', '0900000002', 'customer', 'active');
+END
+
+IF NOT EXISTS (SELECT 1 FROM accounts WHERE username = 'customer_b')
+BEGIN
+    INSERT INTO accounts (username, password_hash, full_name, email, phone, role, status)
+    VALUES ('customer_b', 'cust123', N'Khách hàng B - Hùng', 'customer_b@example.com', '0900000003', 'customer', 'active');
+END
+
+IF NOT EXISTS (SELECT 1 FROM accounts WHERE username = 'customer_c')
+BEGIN
+    INSERT INTO accounts (username, password_hash, full_name, email, phone, role, status)
+    VALUES ('customer_c', 'cust123', N'Khách hàng C - Mai', 'customer_c@example.com', '0900000004', 'customer', 'active');
+END
+
+GO
+
 -- 2. BẢNG KHO
 -- ===================================
 IF OBJECT_ID('warehouses', 'U') IS NOT NULL DROP TABLE warehouses;
@@ -56,6 +88,7 @@ CREATE TABLE warehouses (
     warehouse_id INT IDENTITY(1,1) PRIMARY KEY,
     owner_id INT NOT NULL,
     warehouse_name NVARCHAR(200) NOT NULL,
+
     length DECIMAL(10,2) NOT NULL, -- mét
     width DECIMAL(10,2) NOT NULL,
     height DECIMAL(10,2) NOT NULL,
@@ -64,42 +97,103 @@ CREATE TABLE warehouses (
     -- medium: bao hoặc thùng
     -- large: tất cả loại
     allowed_item_types NVARCHAR(MAX), -- JSON string ['bag', 'box', 'pallet']
+    checkin_position_x DECIMAL(10,2) NULL,
+    checkin_position_y DECIMAL(10,2) NULL,
+    checkin_position_z DECIMAL(10,2) NULL,
+    checkin_length DECIMAL(10,2) NULL,
+    checkin_width DECIMAL(10,2) NULL,
+    checkin_height DECIMAL(10,2) NULL,
     created_at DATETIME2 DEFAULT GETDATE(),
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
     CONSTRAINT FK_warehouses_owner FOREIGN KEY (owner_id) REFERENCES accounts(account_id)
 );
 GO
 
--- ===================================
--- 3. BẢNG KHU VỰC TRONG KHO
--- ===================================
-IF OBJECT_ID('warehouse_zones', 'U') IS NOT NULL DROP TABLE warehouse_zones;
+IF OBJECT_ID('warehouse_gates', 'U') IS NOT NULL DROP TABLE warehouse_gates;
 GO
 
+CREATE TABLE warehouse_gates (
+    gate_id INT IDENTITY(1,1) PRIMARY KEY,
+    warehouse_id INT NOT NULL,
+    gate_name NVARCHAR(200),
+    position_x DECIMAL(10,2) NOT NULL,
+    position_y DECIMAL(10,2) NOT NULL,
+    position_z DECIMAL(10,2) NOT NULL,
+    length DECIMAL(10,2) NULL,
+    width DECIMAL(10,2) NULL,
+    height DECIMAL(10,2) NULL,
+    gate_type VARCHAR(20) NOT NULL CHECK (gate_type IN ('entry', 'exit')),
+    created_at DATETIME2 DEFAULT GETDATE(),
+    CONSTRAINT FK_warehouse_gates_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses(warehouse_id)
+);
+GO
+
+-- ===================================
+-- 2. KHO (2 kho: 1 lớn, 1 vừa)
+-- ===================================
+
+DECLARE @owner_id INT = (SELECT account_id FROM accounts WHERE username = 'chukhoa');
+
+INSERT INTO warehouses (owner_id, warehouse_name, length, width, height, warehouse_type, allowed_item_types, status)
+VALUES 
+    (@owner_id, N'Kho Trung Tâm - Quận 7', 50.00, 30.00, 8.00, 'large', '["bag", "box", "pallet"]', 'active'),
+    (@owner_id, N'Kho Chi Nhánh - Bình Thạnh', 30.00, 20.00, 5.00, 'medium', '["bag", "box"]', 'active');
+
+UPDATE warehouses
+SET checkin_position_x = 3.00,
+    checkin_position_y = 0.00,
+    checkin_position_z = 3.00,
+    checkin_length = 1.50,
+    checkin_width = 0.80,
+    checkin_height = 1.00
+WHERE warehouse_name = N'Kho Trung Tâm - Quận 7';
+
+UPDATE warehouses
+SET checkin_position_x = 2.50,
+    checkin_position_y = 0.00,
+    checkin_position_z = 3.00,
+    checkin_length = 1.20,
+    checkin_width = 0.70,
+    checkin_height = 0.90
+WHERE warehouse_name = N'Kho Chi Nhánh - Bình Thạnh';
+
+GO
+
+-- Hiển thị kho
+SELECT warehouse_id, warehouse_name, warehouse_type, 
+       CONCAT(length, 'm x ', width, 'm x ', height, 'm') AS dimensions
+FROM warehouses;
+GO
+
+-- ===================================
+-- TẠO CẤU TRÚC BẢNG ZONE/RACK/PALLET/HÀNG HÓA/PHIẾU
+-- (dùng được khi tạo database mới từ đầu)
+-- ===================================
+
+-- Khu vực trong kho
 CREATE TABLE warehouse_zones (
     zone_id INT IDENTITY(1,1) PRIMARY KEY,
     warehouse_id INT NOT NULL,
     zone_name NVARCHAR(200),
-    customer_id INT, -- Khu vực riêng cho khách hàng cụ thể
+    customer_id INT NULL,
     position_x DECIMAL(10,2) NOT NULL,
     position_y DECIMAL(10,2) NOT NULL,
     position_z DECIMAL(10,2) NOT NULL,
     length DECIMAL(10,2) NOT NULL,
     width DECIMAL(10,2) NOT NULL,
     height DECIMAL(10,2) NOT NULL,
-    zone_type VARCHAR(20) NOT NULL CHECK (zone_type IN ('ground', 'rack')), -- Đất hoặc kệ
+    zone_type VARCHAR(20) NOT NULL,
     created_at DATETIME2 DEFAULT GETDATE(),
     CONSTRAINT FK_zones_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses(warehouse_id),
     CONSTRAINT FK_zones_customer FOREIGN KEY (customer_id) REFERENCES accounts(account_id)
 );
 GO
 
--- ===================================
--- 4. BẢNG KỆ
--- ===================================
-IF OBJECT_ID('racks', 'U') IS NOT NULL DROP TABLE racks;
+CREATE INDEX IX_zones_customer ON warehouse_zones(customer_id);
+CREATE INDEX IX_zones_warehouse ON warehouse_zones(warehouse_id);
 GO
 
+-- Kệ trong khu vực
 CREATE TABLE racks (
     rack_id INT IDENTITY(1,1) PRIMARY KEY,
     zone_id INT NOT NULL,
@@ -116,69 +210,44 @@ CREATE TABLE racks (
 );
 GO
 
--- ===================================
--- 5. BẢNG TẦNG KỆ
--- ===================================
-IF OBJECT_ID('shelves', 'U') IS NOT NULL DROP TABLE shelves;
+CREATE INDEX IX_racks_zone ON racks(zone_id);
 GO
 
+-- Tầng kệ
 CREATE TABLE shelves (
     shelf_id INT IDENTITY(1,1) PRIMARY KEY,
     rack_id INT NOT NULL,
-    shelf_level INT NOT NULL, -- Tầng 1, 2, 3...
-    position_y DECIMAL(10,2) NOT NULL, -- Độ cao
+    shelf_level INT NOT NULL,
+    position_y DECIMAL(10,2) NOT NULL,
     length DECIMAL(10,2) NOT NULL,
     width DECIMAL(10,2) NOT NULL,
-    max_weight DECIMAL(10,2), -- kg
+    max_weight DECIMAL(10,2) NULL,
     created_at DATETIME2 DEFAULT GETDATE(),
-    CONSTRAINT FK_shelves_rack FOREIGN KEY (rack_id) REFERENCES racks(rack_id),
-    CONSTRAINT UQ_shelf_level UNIQUE (rack_id, shelf_level)
+    CONSTRAINT FK_shelves_rack FOREIGN KEY (rack_id) REFERENCES racks(rack_id)
 );
 GO
 
--- ===================================
--- 6. BẢNG PALLET
--- ===================================
-IF OBJECT_ID('pallets', 'U') IS NOT NULL DROP TABLE pallets;
+CREATE INDEX IX_shelves_rack ON shelves(rack_id);
+CREATE UNIQUE INDEX UQ_shelf_level ON shelves(rack_id, shelf_level);
 GO
 
-CREATE TABLE pallets (
-    pallet_id INT IDENTITY(1,1) PRIMARY KEY,
-    barcode VARCHAR(100) UNIQUE NOT NULL,
-    length DECIMAL(10,2) NOT NULL,
-    width DECIMAL(10,2) NOT NULL,
-    height DECIMAL(10,2) DEFAULT 0.15, -- Chiều cao pallet chuẩn
-    max_weight DECIMAL(10,2) DEFAULT 1000,
-    max_stack_height DECIMAL(10,2) DEFAULT 1.5, -- Tối đa 1.5m
-    pallet_type NVARCHAR(50) NULL, -- Loại pallet (Standard, Small, Large, Container, Custom, etc.)
-    created_at DATETIME2 DEFAULT GETDATE(),
-    status VARCHAR(20) DEFAULT 'available' CHECK (status IN ('available', 'in_use', 'maintenance'))
-);
-GO
-
--- ===================================
--- 6.1. BẢNG PALLET TEMPLATES (Mẫu pallet có sẵn)
--- ===================================
-IF OBJECT_ID('pallet_templates', 'U') IS NOT NULL DROP TABLE pallet_templates;
-GO
-
+-- Mẫu pallet
 CREATE TABLE pallet_templates (
     template_id INT IDENTITY(1,1) PRIMARY KEY,
     template_name NVARCHAR(200) NOT NULL,
-    pallet_type NVARCHAR(50) NULL,
+    pallet_type NVARCHAR(50),
     length DECIMAL(10,2) NOT NULL,
     width DECIMAL(10,2) NOT NULL,
     height DECIMAL(10,2) NOT NULL,
     max_weight DECIMAL(10,2) NOT NULL,
     max_stack_height DECIMAL(10,2) NOT NULL,
-    description NVARCHAR(MAX) NULL,
+    description NVARCHAR(MAX),
     is_active BIT DEFAULT 1,
     created_at DATETIME2 DEFAULT GETDATE(),
     updated_at DATETIME2 DEFAULT GETDATE()
 );
 GO
 
--- Trigger cập nhật updated_at cho pallet_templates
 CREATE OR ALTER TRIGGER trg_pallet_templates_updated_at
 ON pallet_templates
 AFTER UPDATE
@@ -192,26 +261,35 @@ BEGIN
 END
 GO
 
--- ===================================
--- 7. BẢNG VỊ TRÍ PALLET (Trên kệ hoặc dưới đất)
--- ===================================
-IF OBJECT_ID('pallet_locations', 'U') IS NOT NULL DROP TABLE pallet_locations;
+-- Pallet
+CREATE TABLE pallets (
+    pallet_id INT IDENTITY(1,1) PRIMARY KEY,
+    barcode VARCHAR(100) NOT NULL UNIQUE,
+    length DECIMAL(10,2) NOT NULL,
+    width DECIMAL(10,2) NOT NULL,
+    height DECIMAL(10,2) NOT NULL DEFAULT 0.15,
+    max_weight DECIMAL(10,2) NOT NULL DEFAULT 1000,
+    max_stack_height DECIMAL(10,2) NOT NULL DEFAULT 1.5,
+    pallet_type NVARCHAR(50),
+    created_at DATETIME2 DEFAULT GETDATE(),
+    status VARCHAR(20) NOT NULL DEFAULT 'available'
+);
 GO
 
+-- Vị trí pallet
 CREATE TABLE pallet_locations (
     location_id INT IDENTITY(1,1) PRIMARY KEY,
     pallet_id INT NOT NULL,
     zone_id INT NOT NULL,
-    shelf_id INT, -- NULL nếu để dưới đất
+    shelf_id INT NULL,
     position_x DECIMAL(10,2) NOT NULL,
     position_y DECIMAL(10,2) NOT NULL,
     position_z DECIMAL(10,2) NOT NULL,
-    stack_level INT DEFAULT 1 CHECK (stack_level <= 2), -- Tầng chồng (1 hoặc 2)
-    stacked_on_pallet INT, -- ID pallet bên dưới nếu chồng
-    is_ground BIT DEFAULT 0,
+    stack_level INT NOT NULL DEFAULT 1,
+    stacked_on_pallet INT NULL,
+    is_ground BIT NOT NULL DEFAULT 0,
     assigned_at DATETIME2 DEFAULT GETDATE(),
-    -- Mã vị trí cố định dùng cho QR code, sinh tự động từ location_id
-    location_code AS ('LOC-' + RIGHT('000000' + CAST(location_id AS VARCHAR(6)), 6)) PERSISTED,
+    location_code AS ('LOC-' + RIGHT('000000' + CAST([location_id] AS VARCHAR(6)), 6)) PERSISTED,
     CONSTRAINT FK_pallet_locations_pallet FOREIGN KEY (pallet_id) REFERENCES pallets(pallet_id),
     CONSTRAINT FK_pallet_locations_zone FOREIGN KEY (zone_id) REFERENCES warehouse_zones(zone_id),
     CONSTRAINT FK_pallet_locations_shelf FOREIGN KEY (shelf_id) REFERENCES shelves(shelf_id),
@@ -219,35 +297,36 @@ CREATE TABLE pallet_locations (
 );
 GO
 
--- ===================================
--- 8. BẢNG SẢN PHẨM (PRODUCTS)
--- ===================================
-IF OBJECT_ID('products', 'U') IS NOT NULL DROP TABLE products;
+CREATE INDEX IX_pallet_locations_shelf ON pallet_locations(shelf_id);
+CREATE INDEX IX_pallet_locations_zone ON pallet_locations(zone_id);
 GO
 
+-- Sản phẩm
 CREATE TABLE products (
     product_id INT IDENTITY(1,1) PRIMARY KEY,
-    product_code VARCHAR(100) UNIQUE NOT NULL, -- Mã sản phẩm
-    product_name NVARCHAR(300) NOT NULL, -- Tên sản phẩm
-    description NVARCHAR(MAX), -- Mô tả sản phẩm
-    unit NVARCHAR(50) NOT NULL, -- Đơn vị tính (kg, thùng, bao, cái, etc.)
-    category NVARCHAR(100), -- Danh mục (điện tử, thực phẩm, vật liệu xây dựng, etc.)
-    standard_length DECIMAL(10,2), -- Kích thước chuẩn (m)
+    product_code VARCHAR(100) NOT NULL UNIQUE,
+    product_name NVARCHAR(300) NOT NULL,
+    description NVARCHAR(MAX),
+    unit NVARCHAR(50) NOT NULL,
+    category NVARCHAR(100),
+    standard_length DECIMAL(10,2),
     standard_width DECIMAL(10,2),
     standard_height DECIMAL(10,2),
-    standard_weight DECIMAL(10,2), -- Trọng lượng chuẩn (kg)
-    is_fragile BIT DEFAULT 0, -- Hàng dễ vỡ
-    is_hazardous BIT DEFAULT 0, -- Hàng nguy hiểm
-    storage_conditions NVARCHAR(MAX), -- Điều kiện bảo quản
-    create_user INT NULL, -- Người tạo (customer hoặc admin)
+    standard_weight DECIMAL(10,2),
+    is_fragile BIT NOT NULL DEFAULT 0,
+    is_hazardous BIT NOT NULL DEFAULT 0,
+    storage_conditions NVARCHAR(MAX),
+    create_user INT NULL,
     created_at DATETIME2 DEFAULT GETDATE(),
     updated_at DATETIME2 DEFAULT GETDATE(),
-    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
     CONSTRAINT FK_products_create_user FOREIGN KEY (create_user) REFERENCES accounts(account_id)
 );
 GO
 
--- Trigger cập nhật updated_at cho products
+CREATE INDEX IX_products_category ON products(category);
+GO
+
 CREATE OR ALTER TRIGGER trg_products_updated_at
 ON products
 AFTER UPDATE
@@ -261,49 +340,43 @@ BEGIN
 END
 GO
 
--- ===================================
--- 9. BẢNG HÀNG HÓA (ITEMS)
--- ===================================
-IF OBJECT_ID('items', 'U') IS NOT NULL DROP TABLE items;
-GO
-
+-- Hàng hóa (items)
 CREATE TABLE items (
     item_id INT IDENTITY(1,1) PRIMARY KEY,
-    qr_code VARCHAR(100) UNIQUE NOT NULL, -- QR Code cho từng hàng
-    product_id INT NOT NULL, -- Loại sản phẩm
-    customer_id INT NOT NULL, -- Chủ hàng
+    qr_code VARCHAR(100) NOT NULL UNIQUE,
+    product_id INT NOT NULL,
+    customer_id INT NOT NULL,
     item_name NVARCHAR(300) NOT NULL,
-    item_type VARCHAR(20) NOT NULL CHECK (item_type IN ('bag', 'box', 'custom')), -- Bao, thùng, tùy chỉnh
+    item_type VARCHAR(20) NOT NULL,
     length DECIMAL(10,2) NOT NULL,
     width DECIMAL(10,2) NOT NULL,
     height DECIMAL(10,2) NOT NULL,
-    weight DECIMAL(10,2), -- kg
-    shape VARCHAR(20) DEFAULT 'rectangle' CHECK (shape IN ('rectangle', 'square', 'cylinder', 'irregular')),
-    priority_level INT DEFAULT 5 CHECK (priority_level BETWEEN 1 AND 10), -- 1-10, số nhỏ = ưu tiên cao (hay lấy)
-    is_heavy BIT DEFAULT 0,
-    is_fragile BIT DEFAULT 0,
-    batch_number NVARCHAR(100), -- Số lô
-    manufacturing_date DATE, -- Ngày sản xuất
-    expiry_date DATE, -- Ngày hết hạn
-    unit_price DECIMAL(18,2) NULL, -- Đơn giá (1 đơn vị)
-    total_amount DECIMAL(18,2) NULL, -- Thành tiền
+    weight DECIMAL(10,2),
+    shape VARCHAR(20) NOT NULL DEFAULT 'rectangle',
+    priority_level INT NOT NULL DEFAULT 5,
+    is_heavy BIT NOT NULL DEFAULT 0,
+    is_fragile BIT NOT NULL DEFAULT 0,
+    batch_number NVARCHAR(100),
+    manufacturing_date DATE,
+    expiry_date DATE,
+    unit_price DECIMAL(18,2),
+    total_amount DECIMAL(18,2),
     created_at DATETIME2 DEFAULT GETDATE(),
     CONSTRAINT FK_items_product FOREIGN KEY (product_id) REFERENCES products(product_id),
     CONSTRAINT FK_items_customer FOREIGN KEY (customer_id) REFERENCES accounts(account_id)
 );
 GO
 
--- ===================================
--- 10. BẢNG PHÂN BỔ HÀNG TRÊN PALLET
--- ===================================
-IF OBJECT_ID('item_allocations', 'U') IS NOT NULL DROP TABLE item_allocations;
+CREATE INDEX IX_items_customer ON items(customer_id);
+CREATE INDEX IX_items_product ON items(product_id);
 GO
 
+-- Phân bổ hàng trên pallet
 CREATE TABLE item_allocations (
     allocation_id INT IDENTITY(1,1) PRIMARY KEY,
     item_id INT NOT NULL,
     pallet_id INT NOT NULL,
-    position_x DECIMAL(10,2), -- Vị trí tương đối trên pallet
+    position_x DECIMAL(10,2),
     position_y DECIMAL(10,2),
     position_z DECIMAL(10,2),
     allocated_at DATETIME2 DEFAULT GETDATE(),
@@ -312,100 +385,86 @@ CREATE TABLE item_allocations (
 );
 GO
 
--- ===================================
--- 11. BẢNG PHIẾU NHẬP KHO
--- ===================================
-IF OBJECT_ID('inbound_receipts', 'U') IS NOT NULL DROP TABLE inbound_receipts;
+CREATE INDEX IX_item_allocations_pallet ON item_allocations(pallet_id);
 GO
 
+-- Phiếu nhập kho
 CREATE TABLE inbound_receipts (
     receipt_id INT IDENTITY(1,1) PRIMARY KEY,
     warehouse_id INT NOT NULL,
     zone_id INT NULL,
     customer_id INT NOT NULL,
-    receipt_number VARCHAR(100) UNIQUE NOT NULL,
+    receipt_number VARCHAR(100) NOT NULL UNIQUE,
     total_items INT NOT NULL,
     total_pallets INT NOT NULL,
     inbound_date DATETIME2 DEFAULT GETDATE(),
     notes NVARCHAR(MAX),
     created_by INT NOT NULL,
-    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
     CONSTRAINT FK_inbound_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses(warehouse_id),
     CONSTRAINT FK_inbound_customer FOREIGN KEY (customer_id) REFERENCES accounts(account_id),
-    CONSTRAINT FK_inbound_created_by FOREIGN KEY (created_by) REFERENCES accounts(account_id),
-    CONSTRAINT FK_inbound_zone FOREIGN KEY (zone_id) REFERENCES warehouse_zones(zone_id)
+    CONSTRAINT FK_inbound_created_by FOREIGN KEY (created_by) REFERENCES accounts(account_id)
 );
 GO
 
--- ===================================
--- 12. BẢNG CHI TIẾT PHIẾU NHẬP
--- ===================================
-IF OBJECT_ID('inbound_items', 'U') IS NOT NULL DROP TABLE inbound_items;
+CREATE INDEX IX_inbound_customer ON inbound_receipts(customer_id);
+CREATE INDEX IX_inbound_date ON inbound_receipts(inbound_date);
+CREATE INDEX IX_inbound_warehouse ON inbound_receipts(warehouse_id);
 GO
 
+-- Chi tiết phiếu nhập
 CREATE TABLE inbound_items (
     inbound_item_id INT IDENTITY(1,1) PRIMARY KEY,
     receipt_id INT NOT NULL,
     item_id INT NOT NULL,
     pallet_id INT NOT NULL,
-    quantity INT DEFAULT 1,
+    quantity INT NOT NULL DEFAULT 1,
     CONSTRAINT FK_inbound_items_receipt FOREIGN KEY (receipt_id) REFERENCES inbound_receipts(receipt_id),
     CONSTRAINT FK_inbound_items_item FOREIGN KEY (item_id) REFERENCES items(item_id),
     CONSTRAINT FK_inbound_items_pallet FOREIGN KEY (pallet_id) REFERENCES pallets(pallet_id)
 );
 GO
 
--- ===================================
--- 13. BẢNG PHIẾU XUẤT KHO
--- ===================================
-IF OBJECT_ID('outbound_receipts', 'U') IS NOT NULL DROP TABLE outbound_receipts;
-GO
-
+-- Phiếu xuất kho
 CREATE TABLE outbound_receipts (
     receipt_id INT IDENTITY(1,1) PRIMARY KEY,
     warehouse_id INT NOT NULL,
     customer_id INT NOT NULL,
-    receipt_number VARCHAR(100) UNIQUE NOT NULL,
+    receipt_number VARCHAR(100) NOT NULL UNIQUE,
     total_items INT NOT NULL,
     outbound_date DATETIME2 DEFAULT GETDATE(),
     notes NVARCHAR(MAX),
     created_by INT NOT NULL,
-    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
     CONSTRAINT FK_outbound_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses(warehouse_id),
     CONSTRAINT FK_outbound_customer FOREIGN KEY (customer_id) REFERENCES accounts(account_id),
     CONSTRAINT FK_outbound_created_by FOREIGN KEY (created_by) REFERENCES accounts(account_id)
 );
 GO
 
--- ===================================
--- 14. CHI TIẾT PHIẾU XUẤT
--- ===================================
-IF OBJECT_ID('outbound_items', 'U') IS NOT NULL DROP TABLE outbound_items;
+CREATE INDEX IX_outbound_customer ON outbound_receipts(customer_id);
+CREATE INDEX IX_outbound_warehouse ON outbound_receipts(warehouse_id);
 GO
 
+-- Chi tiết phiếu xuất
 CREATE TABLE outbound_items (
     outbound_item_id INT IDENTITY(1,1) PRIMARY KEY,
     receipt_id INT NOT NULL,
     item_id INT NOT NULL,
-    quantity INT DEFAULT 1,
+    quantity INT NOT NULL DEFAULT 1,
     removed_at DATETIME2 DEFAULT GETDATE(),
     CONSTRAINT FK_outbound_items_receipt FOREIGN KEY (receipt_id) REFERENCES outbound_receipts(receipt_id),
     CONSTRAINT FK_outbound_items_item FOREIGN KEY (item_id) REFERENCES items(item_id)
 );
 GO
 
--- ===================================
--- 15. LỊCH SỬ VỊ TRÍ HÀNG (Audit log)
--- ===================================
-IF OBJECT_ID('item_location_history', 'U') IS NOT NULL DROP TABLE item_location_history;
-GO
-
+-- Lịch sử di chuyển hàng hóa
 CREATE TABLE item_location_history (
     history_id INT IDENTITY(1,1) PRIMARY KEY,
     item_id INT NOT NULL,
-    pallet_id INT,
-    location_id INT,
-    action_type VARCHAR(20) NOT NULL CHECK (action_type IN ('inbound', 'outbound', 'move', 'restack')),
+    pallet_id INT NULL,
+    location_id INT NULL,
+    action_type VARCHAR(20) NOT NULL,
     action_date DATETIME2 DEFAULT GETDATE(),
     performed_by INT NOT NULL,
     notes NVARCHAR(MAX),
@@ -416,300 +475,19 @@ CREATE TABLE item_location_history (
 );
 GO
 
--- ===================================
--- INDEXES ĐỂ TỐI ƯU TRUY VẤN
--- ===================================
-
-CREATE NONCLUSTERED INDEX IX_warehouses_owner ON warehouses(owner_id);
-CREATE NONCLUSTERED INDEX IX_zones_warehouse ON warehouse_zones(warehouse_id);
-CREATE NONCLUSTERED INDEX IX_zones_customer ON warehouse_zones(customer_id);
-CREATE NONCLUSTERED INDEX IX_racks_zone ON racks(zone_id);
-CREATE NONCLUSTERED INDEX IX_shelves_rack ON shelves(rack_id);
-CREATE NONCLUSTERED INDEX IX_pallet_locations_zone ON pallet_locations(zone_id);
-CREATE NONCLUSTERED INDEX IX_pallet_locations_shelf ON pallet_locations(shelf_id);
-CREATE NONCLUSTERED INDEX IX_products_category ON products(category);
-CREATE NONCLUSTERED INDEX IX_items_product ON items(product_id);
-CREATE NONCLUSTERED INDEX IX_items_customer ON items(customer_id);
-CREATE NONCLUSTERED INDEX IX_item_allocations_pallet ON item_allocations(pallet_id);
-CREATE NONCLUSTERED INDEX IX_inbound_warehouse ON inbound_receipts(warehouse_id);
-CREATE NONCLUSTERED INDEX IX_inbound_customer ON inbound_receipts(customer_id);
-CREATE NONCLUSTERED INDEX IX_inbound_date ON inbound_receipts(inbound_date);
-CREATE NONCLUSTERED INDEX IX_outbound_warehouse ON outbound_receipts(warehouse_id);
-CREATE NONCLUSTERED INDEX IX_outbound_customer ON outbound_receipts(customer_id);
-GO
-
--- ===================================
--- VIEWS HỖ TRỢ TÌM KIẾM
--- ===================================
-
--- View: Thông tin đầy đủ về pallet và hàng hóa
-IF OBJECT_ID('v_pallet_inventory', 'V') IS NOT NULL DROP VIEW v_pallet_inventory;
-GO
-
-CREATE VIEW v_pallet_inventory AS
-SELECT 
-    p.pallet_id,
-    p.barcode,
-    pl.zone_id,
-    z.zone_name,
-    z.customer_id,
-    acc.full_name as customer_name,
-    pl.shelf_id,
-    pl.position_x,
-    pl.position_y,
-    pl.position_z,
-    pl.is_ground,
-    pl.stack_level,
-    COUNT(ia.item_id) as item_count,
-    MIN(ir.inbound_date) as earliest_inbound_date,
-    SUM(i.weight) as total_weight
-FROM pallets p
-LEFT JOIN pallet_locations pl ON p.pallet_id = pl.pallet_id
-LEFT JOIN warehouse_zones z ON pl.zone_id = z.zone_id
-LEFT JOIN accounts acc ON z.customer_id = acc.account_id
-LEFT JOIN item_allocations ia ON p.pallet_id = ia.pallet_id
-LEFT JOIN items i ON ia.item_id = i.item_id
-LEFT JOIN inbound_items ii ON i.item_id = ii.item_id
-LEFT JOIN inbound_receipts ir ON ii.receipt_id = ir.receipt_id
-WHERE p.status = 'in_use'
-GROUP BY 
-    p.pallet_id, p.barcode, pl.zone_id, z.zone_name, 
-    z.customer_id, acc.full_name, pl.shelf_id,
-    pl.position_x, pl.position_y, pl.position_z,
-    pl.is_ground, pl.stack_level;
-GO
-
--- View: Tìm kiếm hàng theo ưu tiên
-IF OBJECT_ID('v_item_priority_search', 'V') IS NOT NULL DROP VIEW v_item_priority_search;
-GO
-
-CREATE VIEW v_item_priority_search AS
-SELECT 
-    i.item_id,
-    i.qr_code,
-    i.item_name,
-    i.product_id,
-    prod.product_name,
-    prod.product_code,
-    prod.unit,
-    prod.category,
-    i.customer_id,
-    acc.full_name as customer_name,
-    ia.pallet_id,
-    p.barcode as pallet_barcode,
-    pl.zone_id,
-    z.zone_name,
-    pl.shelf_id,
-    s.shelf_level,
-    pl.position_x,
-    pl.position_y,
-    pl.position_z,
-    i.priority_level,
-    i.is_heavy,
-    i.weight,
-    i.batch_number,
-    i.manufacturing_date,
-    i.expiry_date,
-    ir.inbound_date,
-    CASE 
-        WHEN pl.is_ground = 1 THEN 'ground'
-        WHEN s.shelf_level = 1 THEN 'bottom_shelf'
-        WHEN s.shelf_level <= 3 THEN 'middle_shelf'
-        ELSE 'top_shelf'
-    END as storage_position
-FROM items i
-INNER JOIN products prod ON i.product_id = prod.product_id
-INNER JOIN accounts acc ON i.customer_id = acc.account_id
-LEFT JOIN item_allocations ia ON i.item_id = ia.item_id
-LEFT JOIN pallets p ON ia.pallet_id = p.pallet_id
-LEFT JOIN pallet_locations pl ON p.pallet_id = pl.pallet_id
-LEFT JOIN shelves s ON pl.shelf_id = s.shelf_id
-LEFT JOIN warehouse_zones z ON pl.zone_id = z.zone_id
-LEFT JOIN inbound_items ii ON i.item_id = ii.item_id
-LEFT JOIN inbound_receipts ir ON ii.receipt_id = ir.receipt_id;
-GO
-
--- ===================================
--- STORED PROCEDURES
--- ===================================
-
--- SP: Tìm kiếm pallet theo khách hàng với sắp xếp ưu tiên
-CREATE OR ALTER PROCEDURE sp_search_pallets_by_customer
-    @customer_name NVARCHAR(200) = NULL,
-    @warehouse_id INT = NULL
-AS
-BEGIN
-    SET NOCOUNT ON;
-    
-    SELECT 
-        p.pallet_id,
-        p.barcode,
-        acc.full_name as customer_name,
-        COUNT(ia.item_id) as item_count,
-        MIN(ir.inbound_date) as earliest_date,
-        pl.position_x,
-        pl.position_y,
-        pl.position_z,
-        z.zone_name,
-        DATEDIFF(DAY, MIN(ir.inbound_date), GETDATE()) as days_in_storage
-    FROM pallets p
-    LEFT JOIN pallet_locations pl ON p.pallet_id = pl.pallet_id
-    LEFT JOIN warehouse_zones z ON pl.zone_id = z.zone_id
-    LEFT JOIN accounts acc ON z.customer_id = acc.account_id
-    LEFT JOIN item_allocations ia ON p.pallet_id = ia.pallet_id
-    LEFT JOIN inbound_items ii ON ia.item_id = ii.item_id
-    LEFT JOIN inbound_receipts ir ON ii.receipt_id = ir.receipt_id
-    WHERE p.status = 'in_use'
-        AND (@customer_name IS NULL OR acc.full_name LIKE '%' + @customer_name + '%')
-        AND (@warehouse_id IS NULL OR z.warehouse_id = @warehouse_id)
-    GROUP BY 
-        p.pallet_id, p.barcode, acc.full_name,
-        pl.position_x, pl.position_y, pl.position_z, z.zone_name
-    ORDER BY 
-        MIN(ir.inbound_date) ASC,  -- Hàng cũ lên trước
-        COUNT(ia.item_id) ASC;     -- Pallet ít hàng lên trước
-END
-GO
-
--- SP: Tạo phiếu nhập kho
-CREATE OR ALTER PROCEDURE sp_create_inbound_receipt
-    @warehouse_id INT,
-    @customer_id INT,
-    @created_by INT,
-    @total_items INT,
-    @total_pallets INT,
-    @notes NVARCHAR(MAX) = NULL,
-    @receipt_id INT OUTPUT,
-    @receipt_number VARCHAR(100) OUTPUT
-AS
-BEGIN
-    SET NOCOUNT ON;
-    
-    BEGIN TRANSACTION;
-    BEGIN TRY
-        -- Tạo receipt_number
-        DECLARE @temp_id VARCHAR(50) = CAST(NEWID() AS VARCHAR(50));
-        SET @receipt_number = 'IN-' + FORMAT(GETDATE(), 'yyyyMMdd') + '-' + RIGHT(@temp_id, 8);
-        
-        INSERT INTO inbound_receipts (
-            warehouse_id, customer_id, receipt_number,
-            total_items, total_pallets, inbound_date, notes, created_by, status
-        )
-        VALUES (
-            @warehouse_id, @customer_id, @receipt_number,
-            @total_items, @total_pallets, GETDATE(), @notes, @created_by, 'completed'
-        );
-        
-        SET @receipt_id = SCOPE_IDENTITY();
-        
-        COMMIT TRANSACTION;
-    END TRY
-    BEGIN CATCH
-        ROLLBACK TRANSACTION;
-        THROW;
-    END CATCH
-END
-GO
-
--- SP: Tạo phiếu xuất kho
-CREATE OR ALTER PROCEDURE sp_create_outbound_receipt
-    @warehouse_id INT,
-    @customer_id INT,
-    @created_by INT,
-    @total_items INT,
-    @notes NVARCHAR(MAX) = NULL,
-    @receipt_id INT OUTPUT,
-    @receipt_number VARCHAR(100) OUTPUT
-AS
-BEGIN
-    SET NOCOUNT ON;
-    
-    BEGIN TRANSACTION;
-    BEGIN TRY
-        DECLARE @temp_id VARCHAR(50) = CAST(NEWID() AS VARCHAR(50));
-        SET @receipt_number = 'OUT-' + FORMAT(GETDATE(), 'yyyyMMdd') + '-' + RIGHT(@temp_id, 8);
-        
-        INSERT INTO outbound_receipts (
-            warehouse_id, customer_id, receipt_number,
-            total_items, outbound_date, notes, created_by, status
-        )
-        VALUES (
-            @warehouse_id, @customer_id, @receipt_number,
-            @total_items, GETDATE(), @notes, @created_by, 'completed'
-        );
-        
-        SET @receipt_id = SCOPE_IDENTITY();
-        
-        COMMIT TRANSACTION;
-    END TRY
-    BEGIN CATCH
-        ROLLBACK TRANSACTION;
-        THROW;
-    END CATCH
-END
-GO
-
--- ===================================
--- DỮ LIỆU MẪU
--- ===================================
-
-USE WarehouseAPI;
-GO
-
--- ===================================
--- 1. TÀI KHOẢN (1 Admin, 1 Owner, 3 Customers)
--- ===================================
-
--- Admin
-INSERT INTO accounts (username, password_hash, full_name, email, phone, role, status)
-VALUES 
-    ('admin', '$2a$11$BWNG5pW0X8ywfQyHsMYUBeEU8sm5kuQoDK40I.c7OA0CcvHskB..2', N'Nguyễn Văn Admin', 'admin@warehouseapi.vn', '0901234567', 'admin', 'active');
-
--- Owner
-INSERT INTO accounts (username, password_hash, full_name, email, phone, role, status)
-VALUES 
-    ('chukhoa', '$2a$11$BWNG5pW0X8ywfQyHsMYUBeEU8sm5kuQoDK40I.c7OA0CcvHskB..2', N'Trần Minh Khoa', 'khoa@warehouseapi.vn', '0912345678', 'warehouse_owner', 'active');
-
--- Customers
-INSERT INTO accounts (username, password_hash, full_name, email, phone, role, status)
-VALUES 
-    ('customer_a', '$2a$11$BWNG5pW0X8ywfQyHsMYUBeEU8sm5kuQoDK40I.c7OA0CcvHskB..2', N'Nguyễn Thị Lan', 'lan.nguyen@example.com', '0923456789', 'customer', 'active'),
-    ('customer_b', '$2a$11$BWNG5pW0X8ywfQyHsMYUBeEU8sm5kuQoDK40I.c7OA0CcvHskB..2', N'Lê Văn Hùng', 'hung.le@example.com', '0934567890', 'customer', 'active'),
-    ('customer_c', '$2a$11$BWNG5pW0X8ywfQyHsMYUBeEU8sm5kuQoDK40I.c7OA0CcvHskB..2', N'Phạm Thị Mai', 'mai.pham@example.com', '0945678901', 'customer', 'active');
-
-GO
-
--- Hiển thị tài khoản đã tạo
-SELECT account_id, username, full_name, email, role FROM accounts;
-GO
-
--- ===================================
--- 2. KHO (2 kho: 1 lớn, 1 vừa)
--- ===================================
-
-DECLARE @owner_id INT = (SELECT account_id FROM accounts WHERE username = 'chukhoa');
-
-INSERT INTO warehouses (owner_id, warehouse_name, length, width, height, warehouse_type, allowed_item_types, status)
-VALUES 
-    (@owner_id, N'Kho Trung Tâm - Quận 7', 50.00, 30.00, 8.00, 'large', '["bag", "box", "pallet"]', 'active'),
-    (@owner_id, N'Kho Chi Nhánh - Bình Thạnh', 30.00, 20.00, 5.00, 'medium', '["bag", "box"]', 'active');
-
-GO
-
--- Hiển thị kho
-SELECT warehouse_id, warehouse_name, warehouse_type, 
-       CONCAT(length, 'm x ', width, 'm x ', height, 'm') AS dimensions
-FROM warehouses;
-GO
-
--- ===================================
--- 3. KHU VỰC TRONG KHO
--- ===================================
-
+-- Lấy ID kho để seed cổng
 DECLARE @warehouse1_id INT = (SELECT TOP 1 warehouse_id FROM warehouses WHERE warehouse_name LIKE N'%Quận 7%');
 DECLARE @warehouse2_id INT = (SELECT TOP 1 warehouse_id FROM warehouses WHERE warehouse_name LIKE N'%Bình Thạnh%');
+
+INSERT INTO warehouse_gates (warehouse_id, gate_name, position_x, position_y, position_z, length, width, height, gate_type)
+VALUES 
+    (@warehouse1_id, N'Cổng ra 1', 1.50, 0.00, 1.50, 2.50, 0.30, 2.40, 'exit'),
+    (@warehouse1_id, N'Cổng ra 2', 48.50, 0.00, 1.50, 3.00, 0.30, 2.40, 'exit'),
+    (@warehouse2_id, N'Cổng ra 1', 3.00, 0.00, 1.50, 2.00, 0.25, 2.20, 'exit');
+
 DECLARE @customer_a_id INT = (SELECT account_id FROM accounts WHERE username = 'customer_a');
 DECLARE @customer_b_id INT = (SELECT account_id FROM accounts WHERE username = 'customer_b');
+
 DECLARE @customer_c_id INT = (SELECT account_id FROM accounts WHERE username = 'customer_c');
 
 -- Kho 1: Chia 3 khu cho 3 khách hàng
@@ -1008,57 +786,45 @@ GO
 -- 10. PHÂN BỔ HÀNG TRÊN PALLET
 -- ===================================
 
--- Pallet 1: 3 hàng của khách A
+-- Pallet 1: 1 hàng của khách A
 INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
 VALUES 
-    (1, 1, 0.0, 0.15, 0.0),   -- QR-A001
-    (2, 1, 0.6, 0.15, 0.0),   -- QR-A002
-    (3, 1, 0.0, 0.15, 0.5);   -- QR-A003
+    (1, 1, 0.0, 0.00, 0.0);   -- QR-A001
 
--- Pallet 2: 3 hàng của khách A
+-- Pallet 2: 1 hàng của khách A
 INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
 VALUES 
-    (4, 2, 0.0, 0.15, 0.0),   -- QR-A004
-    (5, 2, 0.45, 0.15, 0.0),  -- QR-A005
-    (6, 2, 0.0, 0.15, 0.5);   -- QR-A006
+    (2, 2, 0.0, 0.00, 0.0);   -- QR-A002
 
--- Pallet 3: 2 hàng của khách A
+-- Pallet 3: 1 hàng của khách A
 INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
 VALUES 
-    (7, 3, 0.0, 0.15, 0.0),   -- QR-A007
-    (8, 3, 0.55, 0.15, 0.0);  -- QR-A008
+    (3, 3, 0.0, 0.00, 0.0);   -- QR-A003
 
--- Pallet 4: 3 hàng của khách B
+-- Pallet 4: 1 hàng của khách B
 INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
 VALUES 
-    (9, 4, 0.0, 0.15, 0.0),   -- QR-B001
-    (10, 4, 0.65, 0.15, 0.0), -- QR-B002
-    (11, 4, 0.0, 0.15, 0.55); -- QR-B003
+    (9, 4, 0.0, 0.00, 0.0);   -- QR-B001
 
--- Pallet 5: 3 hàng của khách B
+-- Pallet 5: 1 hàng của khách B
 INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
 VALUES 
-    (12, 5, 0.0, 0.15, 0.0),  -- QR-B004
-    (13, 5, 0.55, 0.15, 0.0), -- QR-B005
-    (14, 5, 0.0, 0.15, 0.45); -- QR-B006
+    (10, 5, 0.0, 0.00, 0.0);  -- QR-B002
 
--- Pallet 6: 2 hàng của khách C
+-- Pallet 6: 1 hàng của khách C
 INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
 VALUES 
-    (15, 6, 0.0, 0.15, 0.0),  -- QR-C001
-    (16, 6, 0.55, 0.15, 0.0); -- QR-C002
+    (15, 6, 0.0, 0.00, 0.0);  -- QR-C001
 
--- Pallet 7: 2 hàng của khách C
+-- Pallet 7: 1 hàng của khách C
 INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
 VALUES 
-    (17, 7, 0.0, 0.15, 0.0),  -- QR-C003
-    (18, 7, 0.45, 0.15, 0.0); -- QR-C004
+    (17, 7, 0.0, 0.00, 0.0);  -- QR-C003
 
--- Pallet 8: 2 hàng của khách C
+-- Pallet 8: 1 hàng của khách C
 INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
 VALUES 
-    (19, 8, 0.0, 0.15, 0.0),  -- QR-C005
-    (20, 8, 0.60, 0.15, 0.0); -- QR-C006
+    (19, 8, 0.0, 0.00, 0.0);  -- QR-C005
 
 GO
 

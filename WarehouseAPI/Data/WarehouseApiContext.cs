@@ -51,6 +51,8 @@ public partial class WarehouseApiContext : DbContext
 
     public virtual DbSet<WarehouseZone> WarehouseZones { get; set; }
 
+    public virtual DbSet<WarehouseGate> WarehouseGates { get; set; }
+
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         => optionsBuilder.UseSqlServer("Name=ConnectionStrings:Warehouse");
 
@@ -816,6 +818,24 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.Length)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("length");
+            entity.Property(e => e.CheckinPositionX)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("checkin_position_x");
+            entity.Property(e => e.CheckinPositionY)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("checkin_position_y");
+            entity.Property(e => e.CheckinPositionZ)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("checkin_position_z");
+            entity.Property(e => e.CheckinLength)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("checkin_length");
+            entity.Property(e => e.CheckinWidth)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("checkin_width");
+            entity.Property(e => e.CheckinHeight)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("checkin_height");
             entity.Property(e => e.OwnerId).HasColumnName("owner_id");
             entity.Property(e => e.Status)
                 .HasMaxLength(20)
@@ -837,6 +857,49 @@ public partial class WarehouseApiContext : DbContext
                 .HasForeignKey(d => d.OwnerId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_warehouses_owner");
+        });
+
+        modelBuilder.Entity<WarehouseGate>(entity =>
+        {
+            entity.HasKey(e => e.GateId);
+
+            entity.ToTable("warehouse_gates");
+
+            entity.Property(e => e.GateId).HasColumnName("gate_id");
+            entity.Property(e => e.WarehouseId).HasColumnName("warehouse_id");
+            entity.Property(e => e.GateName)
+                .HasMaxLength(200)
+                .HasColumnName("gate_name");
+            entity.Property(e => e.PositionX)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("position_x");
+            entity.Property(e => e.PositionY)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("position_y");
+            entity.Property(e => e.PositionZ)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("position_z");
+            entity.Property(e => e.Length)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("length");
+            entity.Property(e => e.Width)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("width");
+            entity.Property(e => e.Height)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("height");
+            entity.Property(e => e.GateType)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasColumnName("gate_type");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("created_at");
+
+            entity.HasOne(d => d.Warehouse).WithMany(p => p.WarehouseGates)
+                .HasForeignKey(d => d.WarehouseId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_warehouse_gates_warehouse");
         });
 
         modelBuilder.Entity<WarehouseZone>(entity =>

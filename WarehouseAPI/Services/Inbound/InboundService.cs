@@ -15,6 +15,27 @@ namespace WarehouseAPI.Services.Inbound
             _context = context;
         }
 
+        private static decimal GetShelfClearHeight(Rack rack, Shelf shelf)
+        {
+            var orderedShelves = rack.Shelves
+                .OrderBy(s => s.ShelfLevel)
+                .ToList();
+
+            var index = orderedShelves.FindIndex(s => s.ShelfId == shelf.ShelfId);
+            if (index < 0)
+            {
+                return rack.Height;
+            }
+
+            if (index < orderedShelves.Count - 1)
+            {
+                var nextShelf = orderedShelves[index + 1];
+                return nextShelf.PositionY - shelf.PositionY;
+            }
+
+            return rack.Height - shelf.PositionY;
+        }
+
         public ApiResponse<object> CreateInboundRequest(int? accountId, string role, CreateInboundRequestRequest request)
         {
             try
@@ -53,7 +74,7 @@ namespace WarehouseAPI.Services.Inbound
                 {
                     // Nếu không phải customer, cần có customer_id trong request
                     // Hoặc có thể để customer_id = accountId nếu warehouse_owner tự tạo
-                    customerId = accountId.Value; // Tạm thời dùng accountId
+                    customerId = accountId.Value; // Tạm thởi dùng accountId
                 }
 
                 // Xác định khu vực (zone) nếu FE gửi lên
@@ -532,6 +553,82 @@ namespace WarehouseAPI.Services.Inbound
                     .Where(pl => zoneIds.Contains(pl.ZoneId))
                     .ToList();
 
+                // Tính điểm ưu tiên zone dựa trên khoảng cách đến bàn checkin và cổng ra
+                var warehouseEntity = receipt.Warehouse;
+                var gates = _context.WarehouseGates
+                    .Where(g => g.WarehouseId == receipt.WarehouseId)
+                    .ToList();
+
+                var exitGates = gates
+                    .Where(g => string.Equals(g.GateType, "exit", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (!exitGates.Any())
+                {
+                    exitGates = gates;
+                }
+
+                decimal? checkinX = warehouseEntity.CheckinPositionX;
+                decimal? checkinZ = warehouseEntity.CheckinPositionZ;
+
+                decimal Distance2D(decimal x1, decimal z1, decimal x2, decimal z2)
+                {
+                    var dx = x1 - x2;
+                    var dz = z1 - z2;
+                    return (decimal)Math.Sqrt((double)(dx * dx + dz * dz));
+                }
+
+                var zoneScores = new Dictionary<int, decimal>();
+
+                foreach (var z in zones)
+                {
+                    var centerX = z.PositionX + z.Length / 2m;
+                    var centerZ = z.PositionZ + z.Width / 2m;
+
+                    decimal distToExit = 0m;
+                    if (exitGates.Any())
+                    {
+                        distToExit = exitGates
+                            .Select(g => Distance2D(centerX, centerZ, g.PositionX, g.PositionZ))
+                            .DefaultIfEmpty(0m)
+                            .Min();
+                    }
+
+                    decimal distToCheckin = 0m;
+                    if (checkinX.HasValue && checkinZ.HasValue)
+                    {
+                        distToCheckin = Distance2D(centerX, centerZ, checkinX.Value, checkinZ.Value);
+                    }
+
+                    decimal score;
+
+                    if (checkinX.HasValue && checkinZ.HasValue)
+                    {
+                        // Ưu tiên gần bàn checkin hơn, sau đó đến cổng ra
+                        score = distToCheckin * 0.7m + distToExit * 0.3m;
+                    }
+                    else
+                    {
+                        // Nếu chưa cấu hình vị trí checkin thì chỉ dùng khoảng cách tới cổng ra
+                        score = distToExit;
+                    }
+
+                    zoneScores[z.ZoneId] = score;
+                }
+
+                IEnumerable<WarehouseZone> OrderZonesByProximity(IEnumerable<WarehouseZone> source)
+                {
+                    if (!zoneScores.Any())
+                    {
+                        return source.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX);
+                    }
+
+                    return source
+                        .OrderBy(z => zoneScores.TryGetValue(z.ZoneId, out var s) ? s : 0m)
+                        .ThenBy(z => z.PositionZ)
+                        .ThenBy(z => z.PositionX);
+                }
+
                 // Parse allowed_item_types: nếu null thì set default theo warehouse_type
                 var warehouseType = receipt.Warehouse.WarehouseType.ToLower();
                 List<string> allowedItemTypes;
@@ -711,6 +808,15 @@ namespace WarehouseAPI.Services.Inbound
 
                                 if (rack != null && shelf != null)
                                 {
+                                    var palletHeight = pallet.Height ?? 0.15m;
+                                    var itemStackHeight = ii.Item.Height;
+                                    var clearHeight = GetShelfClearHeight(rack, shelf);
+
+                                    if (palletHeight + itemStackHeight > clearHeight)
+                                    {
+                                        continue;
+                                    }
+
                                     var shelfX = rack.PositionX;
                                     var shelfZ = rack.PositionZ;
                                     var shelfLength = Math.Min(rack.Length, shelf.Length);
@@ -855,7 +961,7 @@ namespace WarehouseAPI.Services.Inbound
 
                     if (itemIsBox)
                     {
-                        foreach (var zone in candidateZones.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX))
+                        foreach (var zone in OrderZonesByProximity(candidateZones))
                         {
                             if (!racksByZone.TryGetValue(zone.ZoneId, out var zoneRacks) || !zoneRacks.Any())
                             {
@@ -868,6 +974,15 @@ namespace WarehouseAPI.Services.Inbound
                                 {
                                     var shelfExisting = existingLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
                                     var shelfNew = newLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+
+                                    var palletHeight = pallet.Height ?? 0.15m;
+                                    var itemStackHeight = ii.Item.Height;
+                                    var clearHeight = GetShelfClearHeight(rack, shelf);
+
+                                    if (palletHeight + itemStackHeight > clearHeight)
+                                    {
+                                        continue;
+                                    }
 
                                     var shelfX = rack.PositionX;
                                     var shelfZ = rack.PositionZ;
@@ -957,7 +1072,7 @@ namespace WarehouseAPI.Services.Inbound
                     }
                     else
                     {
-                        foreach (var zone in candidateZones.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX))
+                        foreach (var zone in OrderZonesByProximity(candidateZones))
                         {
                             var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
                             var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
@@ -1031,7 +1146,7 @@ namespace WarehouseAPI.Services.Inbound
                         {
                             bool stacked = false;
 
-                            foreach (var zone in candidateZones.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX))
+                            foreach (var zone in OrderZonesByProximity(candidateZones))
                             {
                                 var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId && l.IsGround == true && l.StackLevel == 1).ToList();
                                 var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId && l.IsGround == true && l.StackLevel == 1).ToList();
@@ -1234,6 +1349,82 @@ namespace WarehouseAPI.Services.Inbound
                     .Where(pl => zoneIds.Contains(pl.ZoneId))
                     .ToList();
 
+                // Tính điểm ưu tiên zone dựa trên khoảng cách đến cổng ra và vị trí checkin của kho
+                var warehouseEntity = receipt.Warehouse;
+                var gates = _context.WarehouseGates
+                    .Where(g => g.WarehouseId == receipt.WarehouseId)
+                    .ToList();
+
+                var exitGates = gates
+                    .Where(g => string.Equals(g.GateType, "exit", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (!exitGates.Any())
+                {
+                    exitGates = gates;
+                }
+
+                decimal? checkinX = warehouseEntity.CheckinPositionX;
+                decimal? checkinZ = warehouseEntity.CheckinPositionZ;
+
+                decimal Distance2D(decimal x1, decimal z1, decimal x2, decimal z2)
+                {
+                    var dx = x1 - x2;
+                    var dz = z1 - z2;
+                    return (decimal)Math.Sqrt((double)(dx * dx + dz * dz));
+                }
+
+                var zoneScores = new Dictionary<int, decimal>();
+
+                foreach (var z in zones)
+                {
+                    var centerX = z.PositionX + z.Length / 2m;
+                    var centerZ = z.PositionZ + z.Width / 2m;
+
+                    decimal distToExit = 0m;
+                    if (exitGates.Any())
+                    {
+                        distToExit = exitGates
+                            .Select(g => Distance2D(centerX, centerZ, g.PositionX, g.PositionZ))
+                            .DefaultIfEmpty(0m)
+                            .Min();
+                    }
+
+                    decimal distToCheckin = 0m;
+                    if (checkinX.HasValue && checkinZ.HasValue)
+                    {
+                        distToCheckin = Distance2D(centerX, centerZ, checkinX.Value, checkinZ.Value);
+                    }
+
+                    decimal score;
+
+                    if (checkinX.HasValue && checkinZ.HasValue)
+                    {
+                        // Ưu tiên gần bàn checkin hơn, sau đó đến cổng ra
+                        score = distToCheckin * 0.7m + distToExit * 0.3m;
+                    }
+                    else
+                    {
+                        // Nếu chưa cấu hình vị trí checkin thì chỉ dùng khoảng cách tới cổng ra
+                        score = distToExit;
+                    }
+
+                    zoneScores[z.ZoneId] = score;
+                }
+
+                IEnumerable<WarehouseZone> OrderZonesByProximity(IEnumerable<WarehouseZone> source)
+                {
+                    if (!zoneScores.Any())
+                    {
+                        return source.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX);
+                    }
+
+                    return source
+                        .OrderBy(z => zoneScores.TryGetValue(z.ZoneId, out var s) ? s : 0m)
+                        .ThenBy(z => z.PositionZ)
+                        .ThenBy(z => z.PositionX);
+                }
+
                 // Parse allowed_item_types
                 var warehouseType = receipt.Warehouse.WarehouseType.ToLower();
                 List<string> allowedItemTypes;
@@ -1393,6 +1584,15 @@ namespace WarehouseAPI.Services.Inbound
 
                                 if (rack != null && shelf != null)
                                 {
+                                    var palletHeight = pallet.Height ?? 0.15m;
+                                    var itemStackHeight = ii.Item.Height;
+                                    var clearHeight = GetShelfClearHeight(rack, shelf);
+
+                                    if (palletHeight + itemStackHeight > clearHeight)
+                                    {
+                                        continue;
+                                    }
+
                                     var shelfX = rack.PositionX;
                                     var shelfZ = rack.PositionZ;
                                     var shelfLength = Math.Min(rack.Length, shelf.Length);
@@ -1501,7 +1701,7 @@ namespace WarehouseAPI.Services.Inbound
                     // Thuật toán quét tự động (giống OptimizeInboundLayout)
                     if (itemIsBox)
                     {
-                        foreach (var zone in candidateZones.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX))
+                        foreach (var zone in OrderZonesByProximity(candidateZones))
                         {
                             if (!racksByZone.TryGetValue(zone.ZoneId, out var zoneRacks) || !zoneRacks.Any())
                                 continue;
@@ -1512,6 +1712,16 @@ namespace WarehouseAPI.Services.Inbound
                                 {
                                     var shelfExisting = existingLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
                                     var shelfNew = newLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+
+                                    var palletHeight = pallet.Height ?? 0.15m;
+                                    var itemStackHeight = ii.Item.Height;
+                                    var clearHeight = GetShelfClearHeight(rack, shelf);
+
+                                    if (palletHeight + itemStackHeight > clearHeight)
+                                    {
+                                        continue;
+                                    }
+
                                     var shelfX = rack.PositionX;
                                     var shelfZ = rack.PositionZ;
                                     var shelfLength = Math.Min(rack.Length, shelf.Length);
@@ -1584,7 +1794,7 @@ namespace WarehouseAPI.Services.Inbound
                     else
                     {
                         // Ground placement
-                        foreach (var zone in candidateZones.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX))
+                        foreach (var zone in OrderZonesByProximity(candidateZones))
                         {
                             var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
                             var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
@@ -1642,7 +1852,7 @@ namespace WarehouseAPI.Services.Inbound
                         if (!placed)
                         {
                             bool stacked = false;
-                            foreach (var zone in candidateZones.OrderBy(z => z.PositionZ).ThenBy(z => z.PositionX))
+                            foreach (var zone in OrderZonesByProximity(candidateZones))
                             {
                                 var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId && l.IsGround == true && l.StackLevel == 1).ToList();
                                 var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId && l.IsGround == true && l.StackLevel == 1).ToList();
@@ -1750,7 +1960,7 @@ namespace WarehouseAPI.Services.Inbound
             }
         }
 
-        public ApiResponse<List<InboundRequestListViewModel>> GetInboundRequests(int? accountId, string role, int? warehouseId, string? status)
+        public ApiResponse<List<InboundRequestListViewModel>> GetInboundRequests(int? accountId, string role, int? warehouseId, int? zoneId, string? status)
         {
             try
             {
@@ -1790,6 +2000,12 @@ namespace WarehouseAPI.Services.Inbound
                 if (warehouseId.HasValue)
                 {
                     query = query.Where(r => r.WarehouseId == warehouseId.Value);
+                }
+
+                // Filter theo zone (nếu có) để phân biệt rõ từng khu vực trong cùng 1 kho
+                if (zoneId.HasValue)
+                {
+                    query = query.Where(r => r.ZoneId == zoneId.Value);
                 }
 
                 // Filter theo status

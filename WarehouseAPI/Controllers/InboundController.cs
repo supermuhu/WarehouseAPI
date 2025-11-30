@@ -106,12 +106,12 @@ namespace WarehouseAPI.Controllers
         /// <param name="status">Lọc theo status (tùy chọn: pending, completed, cancelled)</param>
         /// <returns>Danh sách inbound requests</returns>
         [HttpGet("list")]
-        public IActionResult GetInboundRequests([FromQuery] int? warehouseId = null, [FromQuery] string? status = null)
+        public IActionResult GetInboundRequests([FromQuery] int? warehouseId = null, [FromQuery] int? zoneId = null, [FromQuery] string? status = null)
             {
                 var accountId = Utils.GetCurrentAccountId(User);
                 var role = Utils.GetCurrentRole(User);
 
-            var result = _inboundService.GetInboundRequests(accountId, role, warehouseId, status);
+            var result = _inboundService.GetInboundRequests(accountId, role, warehouseId, zoneId, status);
             if (result.StatusCode == 200)
             {
                 return Ok(result);

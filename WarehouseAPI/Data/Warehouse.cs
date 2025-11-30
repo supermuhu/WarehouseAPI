@@ -21,6 +21,18 @@ public partial class Warehouse
 
     public string? AllowedItemTypes { get; set; }
 
+    public decimal? CheckinPositionX { get; set; }
+
+    public decimal? CheckinPositionY { get; set; }
+
+    public decimal? CheckinPositionZ { get; set; }
+
+    public decimal? CheckinLength { get; set; }
+
+    public decimal? CheckinWidth { get; set; }
+
+    public decimal? CheckinHeight { get; set; }
+
     public DateTime? CreatedAt { get; set; }
 
     public string? Status { get; set; }
@@ -32,4 +44,6 @@ public partial class Warehouse
     public virtual Account Owner { get; set; } = null!;
 
     public virtual ICollection<WarehouseZone> WarehouseZones { get; set; } = new List<WarehouseZone>();
+
+    public virtual ICollection<WarehouseGate> WarehouseGates { get; set; } = new List<WarehouseGate>();
 }

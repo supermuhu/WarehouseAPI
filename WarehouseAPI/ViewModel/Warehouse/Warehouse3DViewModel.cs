@@ -15,11 +15,18 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public string? WarehouseType { get; set; }
         public string? AllowedItemTypes { get; set; }
         public string? Status { get; set; }
+        public decimal? CheckinPositionX { get; set; }
+        public decimal? CheckinPositionY { get; set; }
+        public decimal? CheckinPositionZ { get; set; }
+        public decimal? CheckinLength { get; set; }
+        public decimal? CheckinWidth { get; set; }
+        public decimal? CheckinHeight { get; set; }
         
         public List<WarehouseZoneViewModel> Zones { get; set; } = new List<WarehouseZoneViewModel>();
         public List<RackViewModel> Racks { get; set; } = new List<RackViewModel>();
         public List<PalletLocationViewModel> Pallets { get; set; } = new List<PalletLocationViewModel>();
         public List<ItemAllocationViewModel> Items { get; set; } = new List<ItemAllocationViewModel>();
+        public List<WarehouseGateViewModel> Gates { get; set; } = new List<WarehouseGateViewModel>();
     }
 
     /// <summary>
@@ -112,6 +119,10 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public decimal PalletLength { get; set; }
         public decimal PalletWidth { get; set; }
         public decimal PalletHeight { get; set; }
+
+        public string? PalletType { get; set; }
+        public decimal? MaxWeight { get; set; }
+        public decimal? MaxStackHeight { get; set; }
     }
 
     /// <summary>
@@ -134,6 +145,9 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public decimal? StandardLength { get; set; }
         public decimal? StandardWidth { get; set; }
         public decimal? StandardHeight { get; set; }
+        public decimal? StandardWeight { get; set; }
+        public string? ProductDescription { get; set; }
+        public string? StorageConditions { get; set; }
         
         // Customer information
         public int CustomerId { get; set; }
@@ -159,5 +173,28 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public string? BatchNumber { get; set; }
         public DateOnly? ManufacturingDate { get; set; }
         public DateOnly? ExpiryDate { get; set; }
+
+        // Commercial information
+        public decimal? UnitPrice { get; set; }
+        public decimal? TotalAmount { get; set; }
+
+        /// <summary>
+        /// Số lượng đơn vị hàng (ước tính) trên pallet, dùng cho hiển thị 3D.
+        /// </summary>
+        public int? UnitQuantity { get; set; }
+    }
+
+    public class WarehouseGateViewModel
+    {
+        public int GateId { get; set; }
+        public int WarehouseId { get; set; }
+        public string? GateName { get; set; }
+        public decimal PositionX { get; set; }
+        public decimal PositionY { get; set; }
+        public decimal PositionZ { get; set; }
+        public decimal? Length { get; set; }
+        public decimal? Width { get; set; }
+        public decimal? Height { get; set; }
+        public string GateType { get; set; } = string.Empty;
     }
 }

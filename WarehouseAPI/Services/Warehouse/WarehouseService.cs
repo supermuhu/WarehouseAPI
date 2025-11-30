@@ -111,7 +111,27 @@ namespace WarehouseAPI.Services.Warehouse
                         StackedOnPallet = pl.StackedOnPallet,
                         PalletLength = pl.Pallet.Length,
                         PalletWidth = pl.Pallet.Width,
-                        PalletHeight = pl.Pallet.Height ?? 0.15m
+                        PalletHeight = pl.Pallet.Height ?? 0.15m,
+                        PalletType = pl.Pallet.PalletType,
+                        MaxWeight = pl.Pallet.MaxWeight,
+                        MaxStackHeight = pl.Pallet.MaxStackHeight
+                    })
+                    .ToList();
+
+                var gates = db.WarehouseGates
+                    .Where(g => g.WarehouseId == warehouseId)
+                    .Select(g => new WarehouseGateViewModel
+                    {
+                        GateId = g.GateId,
+                        WarehouseId = g.WarehouseId,
+                        GateName = g.GateName,
+                        PositionX = g.PositionX,
+                        PositionY = g.PositionY,
+                        PositionZ = g.PositionZ,
+                        Length = g.Length,
+                        Width = g.Width,
+                        Height = g.Height,
+                        GateType = g.GateType
                     })
                     .ToList();
 
@@ -140,6 +160,9 @@ namespace WarehouseAPI.Services.Warehouse
                         StandardLength = ia.Item.Product.StandardLength,
                         StandardWidth = ia.Item.Product.StandardWidth,
                         StandardHeight = ia.Item.Product.StandardHeight,
+                        StandardWeight = ia.Item.Product.StandardWeight,
+                        ProductDescription = ia.Item.Product.Description,
+                        StorageConditions = ia.Item.Product.StorageConditions,
                         
                         // Customer information
                         CustomerId = ia.Item.CustomerId,
@@ -164,7 +187,16 @@ namespace WarehouseAPI.Services.Warehouse
                         // Batch and date information
                         BatchNumber = ia.Item.BatchNumber,
                         ManufacturingDate = ia.Item.ManufacturingDate,
-                        ExpiryDate = ia.Item.ExpiryDate
+                        ExpiryDate = ia.Item.ExpiryDate,
+
+                        // Commercial information
+                        UnitPrice = ia.Item.UnitPrice,
+                        TotalAmount = ia.Item.TotalAmount,
+                        UnitQuantity = db.InboundItems
+                            .Where(ii => ii.ItemId == ia.ItemId && ii.PalletId == ia.PalletId)
+                            .OrderByDescending(ii => ii.InboundItemId)
+                            .Select(ii => (int?)ii.Quantity)
+                            .FirstOrDefault()
                     })
                     .ToList();
 
@@ -183,7 +215,14 @@ namespace WarehouseAPI.Services.Warehouse
                     Zones = zones,
                     Racks = racks,
                     Pallets = pallets,
-                    Items = items
+                    Items = items,
+                    CheckinPositionX = warehouse.CheckinPositionX,
+                    CheckinPositionY = warehouse.CheckinPositionY,
+                    CheckinPositionZ = warehouse.CheckinPositionZ,
+                    CheckinLength = warehouse.CheckinLength,
+                    CheckinWidth = warehouse.CheckinWidth,
+                    CheckinHeight = warehouse.CheckinHeight,
+                    Gates = gates
                 };
 
                 return new ApiResponse(200, "Lấy dữ liệu kho 3D thành công", result);
