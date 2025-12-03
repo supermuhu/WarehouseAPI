@@ -111,7 +111,7 @@ namespace WarehouseAPI.Services.Warehouse
                         StackedOnPallet = pl.StackedOnPallet,
                         PalletLength = pl.Pallet.Length,
                         PalletWidth = pl.Pallet.Width,
-                        PalletHeight = pl.Pallet.Height ?? 0.15m,
+                        PalletHeight = pl.Pallet.Height,
                         PalletType = pl.Pallet.PalletType,
                         MaxWeight = pl.Pallet.MaxWeight,
                         MaxStackHeight = pl.Pallet.MaxStackHeight
@@ -200,6 +200,112 @@ namespace WarehouseAPI.Services.Warehouse
                     })
                     .ToList();
 
+                // Gắn layout chi tiết (nếu có) từ InboundItemStackUnits cho từng item trên pallet
+                if (items.Any())
+                {
+                    var itemIds = items.Select(i => i.ItemId).Distinct().ToList();
+                    var palletsForItems = items.Select(i => i.PalletId).Distinct().ToList();
+
+                    // Lấy inbound_item tương ứng với từng cặp (ItemId, PalletId), ưu tiên inbound mới nhất
+                    var inboundItemsForAlloc = db.InboundItems
+                        .Where(ii => itemIds.Contains(ii.ItemId) && palletsForItems.Contains(ii.PalletId))
+                        .Select(ii => new { ii.InboundItemId, ii.ItemId, ii.PalletId })
+                        .ToList();
+
+                    var inboundItemLookup = inboundItemsForAlloc
+                        .GroupBy(ii => new { ii.ItemId, ii.PalletId })
+                        .ToDictionary(
+                            g => (ItemId: g.Key.ItemId, PalletId: g.Key.PalletId),
+                            g => g.OrderByDescending(x => x.InboundItemId).First().InboundItemId
+                        );
+
+                    var inboundItemIds = inboundItemLookup.Values.Distinct().ToList();
+
+                    if (inboundItemIds.Any())
+                    {
+                        var units = db.InboundItemStackUnits
+                            .Where(u => inboundItemIds.Contains(u.InboundItemId))
+                            .ToList();
+
+                        var unitsByInboundItem = units
+                            .GroupBy(u => u.InboundItemId)
+                            .ToDictionary(
+                                g => g.Key,
+                                g => g.OrderBy(u => u.UnitIndex).ToList()
+                            );
+
+                        // Tra bảng chiều cao pallet theo PalletId để tính chiều cao khối hàng trên pallet
+                        var palletHeights = pallets
+                            .GroupBy(p => p.PalletId)
+                            .ToDictionary(g => g.Key, g => g.First().PalletHeight);
+
+                        foreach (var item in items)
+                        {
+                            if (!inboundItemLookup.TryGetValue((item.ItemId, item.PalletId), out var inboundItemId))
+                            {
+                                continue;
+                            }
+
+                            if (!unitsByInboundItem.TryGetValue(inboundItemId, out var unitEntities) ||
+                                unitEntities == null || unitEntities.Count == 0)
+                            {
+                                continue;
+                            }
+
+                            var stackUnits = unitEntities
+                                .Select(u => new ItemStackUnitViewModel
+                                {
+                                    UnitIndex = u.UnitIndex,
+                                    LocalX = u.LocalX,
+                                    LocalY = u.LocalY,
+                                    LocalZ = u.LocalZ,
+                                    Length = u.Length,
+                                    Width = u.Width,
+                                    Height = u.Height,
+                                    RotationY = u.RotationY
+                                })
+                                .ToList();
+
+                            item.StackUnits = stackUnits;
+
+                            // Từ layout chi tiết tính lại kích thước khối hàng (L/W/H) trên pallet
+                            if (stackUnits.Any())
+                            {
+                                // Chiều dài & rộng: bounding box theo trục X/Z quanh tâm pallet
+                                var minX = stackUnits.Min(u => u.LocalX - u.Length / 2m);
+                                var maxX = stackUnits.Max(u => u.LocalX + u.Length / 2m);
+                                var minZ = stackUnits.Min(u => u.LocalZ - u.Width / 2m);
+                                var maxZ = stackUnits.Max(u => u.LocalZ + u.Width / 2m);
+
+                                var blockLength = maxX - minX;
+                                var blockWidth = maxZ - minZ;
+
+                                if (blockLength > 0m)
+                                {
+                                    item.Length = blockLength;
+                                }
+
+                                if (blockWidth > 0m)
+                                {
+                                    item.Width = blockWidth;
+                                }
+
+                                // Chiều cao: đỉnh cao nhất trừ đi chiều cao pallet
+                                if (palletHeights.TryGetValue(item.PalletId, out var palletHeight))
+                                {
+                                    var maxTop = stackUnits.Max(u => u.LocalY + u.Height / 2m);
+                                    var goodsHeight = maxTop - palletHeight;
+
+                                    if (goodsHeight > 0m)
+                                    {
+                                        item.Height = goodsHeight;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 var result = new Warehouse3DViewModel
                 {
                     WarehouseId = warehouse.WarehouseId,
@@ -267,23 +373,58 @@ namespace WarehouseAPI.Services.Warehouse
         {
             try
             {
-                var warehouses = db.Warehouses
-                    .Include(w => w.Owner)
-                    .Where(w => w.OwnerId == ownerId)
-                    .Select(w => new WarehouseListViewModel
-                    {
-                        WarehouseId = w.WarehouseId,
-                        WarehouseName = w.WarehouseName,
-                        OwnerId = w.OwnerId,
-                        OwnerName = w.Owner.FullName,
-                        Length = w.Length,
-                        Width = w.Width,
-                        Height = w.Height,
-                        WarehouseType = w.WarehouseType,
-                        Status = w.Status,
-                        CreatedAt = w.CreatedAt
-                    })
+                // Ưu tiên trả về danh sách theo từng zone (khu vực) để FE có thể hiển thị
+                // "Kho - Khu vực" giống như luồng customer.
+                var zones = db.WarehouseZones
+                    .Include(z => z.Warehouse)
+                        .ThenInclude(w => w.Owner)
+                    .Where(z => z.Warehouse.OwnerId == ownerId && z.Warehouse.Status == "active")
                     .ToList();
+
+                List<WarehouseListViewModel> warehouses;
+
+                if (zones.Any())
+                {
+                    warehouses = zones
+                        .Select(z => new WarehouseListViewModel
+                        {
+                            WarehouseId = z.WarehouseId,
+                            WarehouseName = z.Warehouse.WarehouseName,
+                            OwnerId = z.Warehouse.OwnerId,
+                            OwnerName = z.Warehouse.Owner.FullName,
+                            Length = z.Warehouse.Length,
+                            Width = z.Warehouse.Width,
+                            Height = z.Warehouse.Height,
+                            WarehouseType = z.Warehouse.WarehouseType,
+                            Status = z.Warehouse.Status,
+                            CreatedAt = z.Warehouse.CreatedAt,
+                            ZoneId = z.ZoneId,
+                            ZoneName = z.ZoneName,
+                            ZoneType = z.ZoneType
+                        })
+                        .ToList();
+                }
+                else
+                {
+                    // Nếu chưa cấu hình zone, fallback về danh sách kho như cũ
+                    warehouses = db.Warehouses
+                        .Include(w => w.Owner)
+                        .Where(w => w.OwnerId == ownerId)
+                        .Select(w => new WarehouseListViewModel
+                        {
+                            WarehouseId = w.WarehouseId,
+                            WarehouseName = w.WarehouseName,
+                            OwnerId = w.OwnerId,
+                            OwnerName = w.Owner.FullName,
+                            Length = w.Length,
+                            Width = w.Width,
+                            Height = w.Height,
+                            WarehouseType = w.WarehouseType,
+                            Status = w.Status,
+                            CreatedAt = w.CreatedAt
+                        })
+                        .ToList();
+                }
 
                 return new ApiResponse(200, "Lấy danh sách kho theo chủ kho thành công", warehouses);
             }

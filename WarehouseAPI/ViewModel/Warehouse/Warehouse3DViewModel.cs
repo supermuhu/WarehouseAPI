@@ -182,6 +182,26 @@ namespace WarehouseAPI.ViewModel.Warehouse
         /// Số lượng đơn vị hàng (ước tính) trên pallet, dùng cho hiển thị 3D.
         /// </summary>
         public int? UnitQuantity { get; set; }
+
+        /// <summary>
+        /// Layout chi tiết các đơn vị hàng trên pallet (nếu có), lấy từ InboundItemStackUnits.
+        /// </summary>
+        public List<ItemStackUnitViewModel>? StackUnits { get; set; }
+    }
+
+    /// <summary>
+    /// ViewModel cho từng đơn vị hàng trong layout xếp chồng trên pallet.
+    /// </summary>
+    public class ItemStackUnitViewModel
+    {
+        public int UnitIndex { get; set; }
+        public decimal LocalX { get; set; }
+        public decimal LocalY { get; set; }
+        public decimal LocalZ { get; set; }
+        public decimal Length { get; set; }
+        public decimal Width { get; set; }
+        public decimal Height { get; set; }
+        public decimal RotationY { get; set; }
     }
 
     public class WarehouseGateViewModel

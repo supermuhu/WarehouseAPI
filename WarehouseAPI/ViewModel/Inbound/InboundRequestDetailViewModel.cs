@@ -17,6 +17,7 @@ public class InboundRequestDetailViewModel
     public string? Notes { get; set; }
     public string? CreatedByName { get; set; }
     public List<InboundItemDetailViewModel> Items { get; set; } = new List<InboundItemDetailViewModel>();
+    public string StackMode { get; set; } = "auto";
 }
 
 public class InboundItemDetailViewModel

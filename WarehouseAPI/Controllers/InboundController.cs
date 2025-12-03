@@ -157,5 +157,19 @@ namespace WarehouseAPI.Controllers
             }
             return StatusCode(result.StatusCode, result);
         }
+
+        /// <summary>
+        /// Lưu layout xếp hàng chi tiết (tự xếp) cho các InboundItem trên pallet
+        /// </summary>
+        /// <param name="receiptId">ID phiếu inbound</param>
+        [HttpPut("{receiptId}/manual-stack-layout")]
+        public IActionResult SaveManualStackLayout(int receiptId, [FromBody] ManualStackLayoutRequest request)
+        {
+            var accountId = Utils.GetCurrentAccountId(User);
+            var role = Utils.GetCurrentRole(User);
+
+            var result = _inboundService.SaveManualStackLayout(receiptId, accountId, role, request);
+            return StatusCode(result.StatusCode, result);
+        }
     }
 }

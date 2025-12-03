@@ -25,9 +25,11 @@ public partial class Product
 
     public decimal? StandardWeight { get; set; }
 
-    public bool? IsFragile { get; set; }
+    public bool IsFragile { get; set; }
 
-    public bool? IsHazardous { get; set; }
+    public bool IsHazardous { get; set; }
+
+    public bool IsNonStackable { get; set; }
 
     public string? StorageConditions { get; set; }
 
@@ -37,7 +39,7 @@ public partial class Product
 
     public DateTime? UpdatedAt { get; set; }
 
-    public string? Status { get; set; }
+    public string Status { get; set; } = null!;
 
     public virtual Account? CreateUserNavigation { get; set; }
 

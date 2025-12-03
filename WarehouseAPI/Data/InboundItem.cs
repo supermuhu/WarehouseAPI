@@ -13,7 +13,9 @@ public partial class InboundItem
 
     public int PalletId { get; set; }
 
-    public int? Quantity { get; set; }
+    public int Quantity { get; set; }
+
+    public virtual ICollection<InboundItemStackUnit> InboundItemStackUnits { get; set; } = new List<InboundItemStackUnit>();
 
     public virtual Item Item { get; set; } = null!;
 

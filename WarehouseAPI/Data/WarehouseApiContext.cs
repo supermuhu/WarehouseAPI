@@ -19,6 +19,8 @@ public partial class WarehouseApiContext : DbContext
 
     public virtual DbSet<InboundItem> InboundItems { get; set; }
 
+    public virtual DbSet<InboundItemStackUnit> InboundItemStackUnits { get; set; }
+
     public virtual DbSet<InboundReceipt> InboundReceipts { get; set; }
 
     public virtual DbSet<Item> Items { get; set; }
@@ -43,15 +45,11 @@ public partial class WarehouseApiContext : DbContext
 
     public virtual DbSet<Shelf> Shelves { get; set; }
 
-    public virtual DbSet<VItemPrioritySearch> VItemPrioritySearches { get; set; }
-
-    public virtual DbSet<VPalletInventory> VPalletInventories { get; set; }
-
     public virtual DbSet<Warehouse> Warehouses { get; set; }
 
-    public virtual DbSet<WarehouseZone> WarehouseZones { get; set; }
-
     public virtual DbSet<WarehouseGate> WarehouseGates { get; set; }
+
+    public virtual DbSet<WarehouseZone> WarehouseZones { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         => optionsBuilder.UseSqlServer("Name=ConnectionStrings:Warehouse");
@@ -60,11 +58,11 @@ public partial class WarehouseApiContext : DbContext
     {
         modelBuilder.Entity<Account>(entity =>
         {
-            entity.HasKey(e => e.AccountId).HasName("PK__accounts__46A222CDE693C5CB");
+            entity.HasKey(e => e.AccountId).HasName("PK__accounts__46A222CD7562CB50");
 
             entity.ToTable("accounts", tb => tb.HasTrigger("trg_accounts_updated_at"));
 
-            entity.HasIndex(e => e.Username, "UQ__accounts__F3DBC572E87AA4B2").IsUnique();
+            entity.HasIndex(e => e.Username, "UQ__accounts__F3DBC572E1399352").IsUnique();
 
             entity.Property(e => e.AccountId).HasColumnName("account_id");
             entity.Property(e => e.CreatedAt)
@@ -105,7 +103,7 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<InboundItem>(entity =>
         {
-            entity.HasKey(e => e.InboundItemId).HasName("PK__inbound___9EF5940755AF0F77");
+            entity.HasKey(e => e.InboundItemId).HasName("PK__inbound___9EF59407F37961F6");
 
             entity.ToTable("inbound_items");
 
@@ -133,9 +131,48 @@ public partial class WarehouseApiContext : DbContext
                 .HasConstraintName("FK_inbound_items_receipt");
         });
 
+        modelBuilder.Entity<InboundItemStackUnit>(entity =>
+        {
+            entity.HasKey(e => e.LayoutId).HasName("PK__inbound___255F1E9AF5BC5F10");
+
+            entity.ToTable("inbound_item_stack_units");
+
+            entity.HasIndex(e => e.InboundItemId, "IX_inbound_item_stack_units_inbound_item");
+
+            entity.Property(e => e.LayoutId).HasColumnName("layout_id");
+            entity.Property(e => e.Height)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("height");
+            entity.Property(e => e.InboundItemId).HasColumnName("inbound_item_id");
+            entity.Property(e => e.Length)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("length");
+            entity.Property(e => e.LocalX)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("local_x");
+            entity.Property(e => e.LocalY)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("local_y");
+            entity.Property(e => e.LocalZ)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("local_z");
+            entity.Property(e => e.RotationY)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("rotation_y");
+            entity.Property(e => e.UnitIndex).HasColumnName("unit_index");
+            entity.Property(e => e.Width)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("width");
+
+            entity.HasOne(d => d.InboundItem).WithMany(p => p.InboundItemStackUnits)
+                .HasForeignKey(d => d.InboundItemId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_inbound_item_stack_units_inbound_item");
+        });
+
         modelBuilder.Entity<InboundReceipt>(entity =>
         {
-            entity.HasKey(e => e.ReceiptId).HasName("PK__inbound___91F52C1F21FAAFF4");
+            entity.HasKey(e => e.ReceiptId).HasName("PK__inbound___91F52C1FAEF78D6E");
 
             entity.ToTable("inbound_receipts");
 
@@ -145,9 +182,13 @@ public partial class WarehouseApiContext : DbContext
 
             entity.HasIndex(e => e.WarehouseId, "IX_inbound_warehouse");
 
-            entity.HasIndex(e => e.ReceiptNumber, "UQ__inbound___89FE4B755253F0FE").IsUnique();
+            entity.HasIndex(e => e.ReceiptNumber, "UQ__inbound___89FE4B75250BBC8D").IsUnique();
 
             entity.Property(e => e.ReceiptId).HasColumnName("receipt_id");
+            entity.Property(e => e.AutoStackTemplate)
+                .HasMaxLength(50)
+                .IsUnicode(false)
+                .HasColumnName("auto_stack_template");
             entity.Property(e => e.CreatedBy).HasColumnName("created_by");
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
             entity.Property(e => e.InboundDate)
@@ -158,6 +199,11 @@ public partial class WarehouseApiContext : DbContext
                 .HasMaxLength(100)
                 .IsUnicode(false)
                 .HasColumnName("receipt_number");
+            entity.Property(e => e.StackMode)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasDefaultValue("auto")
+                .HasColumnName("stack_mode");
             entity.Property(e => e.Status)
                 .HasMaxLength(20)
                 .IsUnicode(false)
@@ -186,7 +232,7 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<Item>(entity =>
         {
-            entity.HasKey(e => e.ItemId).HasName("PK__items__52020FDD9DE29772");
+            entity.HasKey(e => e.ItemId).HasName("PK__items__52020FDD3CF3D9B7");
 
             entity.ToTable("items");
 
@@ -194,7 +240,7 @@ public partial class WarehouseApiContext : DbContext
 
             entity.HasIndex(e => e.ProductId, "IX_items_product");
 
-            entity.HasIndex(e => e.QrCode, "UQ__items__E2FB8889F47DF4F5").IsUnique();
+            entity.HasIndex(e => e.QrCode, "UQ__items__E2FB88894EAFA35B").IsUnique();
 
             entity.Property(e => e.ItemId).HasColumnName("item_id");
             entity.Property(e => e.BatchNumber)
@@ -208,12 +254,9 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.Height)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("height");
-            entity.Property(e => e.IsFragile)
-                .HasDefaultValue(false)
-                .HasColumnName("is_fragile");
-            entity.Property(e => e.IsHeavy)
-                .HasDefaultValue(false)
-                .HasColumnName("is_heavy");
+            entity.Property(e => e.IsFragile).HasColumnName("is_fragile");
+            entity.Property(e => e.IsHeavy).HasColumnName("is_heavy");
+            entity.Property(e => e.IsNonStackable).HasColumnName("is_non_stackable");
             entity.Property(e => e.ItemName)
                 .HasMaxLength(300)
                 .HasColumnName("item_name");
@@ -264,7 +307,7 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<ItemAllocation>(entity =>
         {
-            entity.HasKey(e => e.AllocationId).HasName("PK__item_all__5DFAFF30405937CB");
+            entity.HasKey(e => e.AllocationId).HasName("PK__item_all__5DFAFF30C8A7A347");
 
             entity.ToTable("item_allocations");
 
@@ -299,7 +342,7 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<ItemLocationHistory>(entity =>
         {
-            entity.HasKey(e => e.HistoryId).HasName("PK__item_loc__096AA2E9D37318DD");
+            entity.HasKey(e => e.HistoryId).HasName("PK__item_loc__096AA2E9F359E640");
 
             entity.ToTable("item_location_history");
 
@@ -338,7 +381,7 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<OutboundItem>(entity =>
         {
-            entity.HasKey(e => e.OutboundItemId).HasName("PK__outbound__3EEE316F0A40863E");
+            entity.HasKey(e => e.OutboundItemId).HasName("PK__outbound__3EEE316F6F6C59B8");
 
             entity.ToTable("outbound_items");
 
@@ -365,15 +408,11 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<OutboundReceipt>(entity =>
         {
-            entity.HasKey(e => e.ReceiptId).HasName("PK__outbound__91F52C1F8116E217");
+            entity.HasKey(e => e.ReceiptId).HasName("PK__outbound__91F52C1F1DE336F0");
 
             entity.ToTable("outbound_receipts");
 
-            entity.HasIndex(e => e.CustomerId, "IX_outbound_customer");
-
-            entity.HasIndex(e => e.WarehouseId, "IX_outbound_warehouse");
-
-            entity.HasIndex(e => e.ReceiptNumber, "UQ__outbound__89FE4B75F97E06BD").IsUnique();
+            entity.HasIndex(e => e.ReceiptNumber, "UQ__outbound__89FE4B7555714852").IsUnique();
 
             entity.Property(e => e.ReceiptId).HasColumnName("receipt_id");
             entity.Property(e => e.CreatedBy).HasColumnName("created_by");
@@ -412,11 +451,11 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<Pallet>(entity =>
         {
-            entity.HasKey(e => e.PalletId).HasName("PK__pallets__99AF8959406046A8");
+            entity.HasKey(e => e.PalletId).HasName("PK__pallets__99AF89598AEB4823");
 
             entity.ToTable("pallets");
 
-            entity.HasIndex(e => e.Barcode, "UQ__pallets__C16E36F869AA7C4F").IsUnique();
+            entity.HasIndex(e => e.Barcode, "UQ__pallets__C16E36F86E8C19BD").IsUnique();
 
             entity.Property(e => e.PalletId).HasColumnName("pallet_id");
             entity.Property(e => e.Barcode)
@@ -456,7 +495,7 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<PalletLocation>(entity =>
         {
-            entity.HasKey(e => e.LocationId).HasName("PK__pallet_l__771831EAA97ED087");
+            entity.HasKey(e => e.LocationId).HasName("PK__pallet_l__771831EAFBD835A2");
 
             entity.ToTable("pallet_locations");
 
@@ -468,9 +507,12 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.AssignedAt)
                 .HasDefaultValueSql("(getdate())")
                 .HasColumnName("assigned_at");
-            entity.Property(e => e.IsGround)
-                .HasDefaultValue(false)
-                .HasColumnName("is_ground");
+            entity.Property(e => e.IsGround).HasColumnName("is_ground");
+            entity.Property(e => e.LocationCode)
+                .HasMaxLength(10)
+                .IsUnicode(false)
+                .HasComputedColumnSql("('LOC-'+right('000000'+CONVERT([varchar](6),[location_id]),(6)))", true)
+                .HasColumnName("location_code");
             entity.Property(e => e.PalletId).HasColumnName("pallet_id");
             entity.Property(e => e.PositionX)
                 .HasColumnType("decimal(10, 2)")
@@ -487,10 +529,6 @@ public partial class WarehouseApiContext : DbContext
                 .HasColumnName("stack_level");
             entity.Property(e => e.StackedOnPallet).HasColumnName("stacked_on_pallet");
             entity.Property(e => e.ZoneId).HasColumnName("zone_id");
-            entity.Property(e => e.LocationCode)
-                .HasMaxLength(50)
-                .HasColumnName("location_code")
-                .HasComputedColumnSql("('LOC-' + RIGHT('000000' + CAST([location_id] AS VARCHAR(6)), 6))", stored: true);
 
             entity.HasOne(d => d.Pallet).WithMany(p => p.PalletLocationPallets)
                 .HasForeignKey(d => d.PalletId)
@@ -513,7 +551,7 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<PalletTemplate>(entity =>
         {
-            entity.HasKey(e => e.TemplateId).HasName("PK__pallet_t__BE44E079D6400CB4");
+            entity.HasKey(e => e.TemplateId).HasName("PK__pallet_t__BE44E079852F501A");
 
             entity.ToTable("pallet_templates", tb => tb.HasTrigger("trg_pallet_templates_updated_at"));
 
@@ -553,13 +591,13 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<Product>(entity =>
         {
-            entity.HasKey(e => e.ProductId).HasName("PK__products__47027DF59585481C");
+            entity.HasKey(e => e.ProductId).HasName("PK__products__47027DF597445F67");
 
             entity.ToTable("products", tb => tb.HasTrigger("trg_products_updated_at"));
 
             entity.HasIndex(e => e.Category, "IX_products_category");
 
-            entity.HasIndex(e => e.ProductCode, "UQ__products__AE1A8CC4146D2D07").IsUnique();
+            entity.HasIndex(e => e.ProductCode, "UQ__products__AE1A8CC418C1A66B").IsUnique();
 
             entity.Property(e => e.ProductId).HasColumnName("product_id");
             entity.Property(e => e.Category)
@@ -570,12 +608,9 @@ public partial class WarehouseApiContext : DbContext
                 .HasDefaultValueSql("(getdate())")
                 .HasColumnName("created_at");
             entity.Property(e => e.Description).HasColumnName("description");
-            entity.Property(e => e.IsFragile)
-                .HasDefaultValue(false)
-                .HasColumnName("is_fragile");
-            entity.Property(e => e.IsHazardous)
-                .HasDefaultValue(false)
-                .HasColumnName("is_hazardous");
+            entity.Property(e => e.IsFragile).HasColumnName("is_fragile");
+            entity.Property(e => e.IsHazardous).HasColumnName("is_hazardous");
+            entity.Property(e => e.IsNonStackable).HasColumnName("is_non_stackable");
             entity.Property(e => e.ProductCode)
                 .HasMaxLength(100)
                 .IsUnicode(false)
@@ -615,7 +650,7 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<Rack>(entity =>
         {
-            entity.HasKey(e => e.RackId).HasName("PK__racks__6E237EB3B6A3BC58");
+            entity.HasKey(e => e.RackId).HasName("PK__racks__6E237EB3E10A3D40");
 
             entity.ToTable("racks");
 
@@ -659,7 +694,7 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<Shelf>(entity =>
         {
-            entity.HasKey(e => e.ShelfId).HasName("PK__shelves__E33A5B7C11ED560F");
+            entity.HasKey(e => e.ShelfId).HasName("PK__shelves__E33A5B7CA815306B");
 
             entity.ToTable("shelves");
 
@@ -692,132 +727,20 @@ public partial class WarehouseApiContext : DbContext
                 .HasConstraintName("FK_shelves_rack");
         });
 
-        modelBuilder.Entity<VItemPrioritySearch>(entity =>
-        {
-            entity
-                .HasNoKey()
-                .ToView("v_item_priority_search");
-
-            entity.Property(e => e.BatchNumber)
-                .HasMaxLength(100)
-                .HasColumnName("batch_number");
-            entity.Property(e => e.Category)
-                .HasMaxLength(100)
-                .HasColumnName("category");
-            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
-            entity.Property(e => e.CustomerName)
-                .HasMaxLength(200)
-                .HasColumnName("customer_name");
-            entity.Property(e => e.ExpiryDate).HasColumnName("expiry_date");
-            entity.Property(e => e.InboundDate).HasColumnName("inbound_date");
-            entity.Property(e => e.IsHeavy).HasColumnName("is_heavy");
-            entity.Property(e => e.ItemId).HasColumnName("item_id");
-            entity.Property(e => e.ItemName)
-                .HasMaxLength(300)
-                .HasColumnName("item_name");
-            entity.Property(e => e.ManufacturingDate).HasColumnName("manufacturing_date");
-            entity.Property(e => e.PalletBarcode)
-                .HasMaxLength(100)
-                .IsUnicode(false)
-                .HasColumnName("pallet_barcode");
-            entity.Property(e => e.PalletId).HasColumnName("pallet_id");
-            entity.Property(e => e.PositionX)
-                .HasColumnType("decimal(10, 2)")
-                .HasColumnName("position_x");
-            entity.Property(e => e.PositionY)
-                .HasColumnType("decimal(10, 2)")
-                .HasColumnName("position_y");
-            entity.Property(e => e.PositionZ)
-                .HasColumnType("decimal(10, 2)")
-                .HasColumnName("position_z");
-            entity.Property(e => e.PriorityLevel).HasColumnName("priority_level");
-            entity.Property(e => e.ProductCode)
-                .HasMaxLength(100)
-                .IsUnicode(false)
-                .HasColumnName("product_code");
-            entity.Property(e => e.ProductId).HasColumnName("product_id");
-            entity.Property(e => e.ProductName)
-                .HasMaxLength(300)
-                .HasColumnName("product_name");
-            entity.Property(e => e.QrCode)
-                .HasMaxLength(100)
-                .IsUnicode(false)
-                .HasColumnName("qr_code");
-            entity.Property(e => e.ShelfId).HasColumnName("shelf_id");
-            entity.Property(e => e.ShelfLevel).HasColumnName("shelf_level");
-            entity.Property(e => e.StoragePosition)
-                .HasMaxLength(12)
-                .IsUnicode(false)
-                .HasColumnName("storage_position");
-            entity.Property(e => e.Unit)
-                .HasMaxLength(50)
-                .HasColumnName("unit");
-            entity.Property(e => e.Weight)
-                .HasColumnType("decimal(10, 2)")
-                .HasColumnName("weight");
-            entity.Property(e => e.ZoneId).HasColumnName("zone_id");
-            entity.Property(e => e.ZoneName)
-                .HasMaxLength(200)
-                .HasColumnName("zone_name");
-        });
-
-        modelBuilder.Entity<VPalletInventory>(entity =>
-        {
-            entity
-                .HasNoKey()
-                .ToView("v_pallet_inventory");
-
-            entity.Property(e => e.Barcode)
-                .HasMaxLength(100)
-                .IsUnicode(false)
-                .HasColumnName("barcode");
-            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
-            entity.Property(e => e.CustomerName)
-                .HasMaxLength(200)
-                .HasColumnName("customer_name");
-            entity.Property(e => e.EarliestInboundDate).HasColumnName("earliest_inbound_date");
-            entity.Property(e => e.IsGround).HasColumnName("is_ground");
-            entity.Property(e => e.ItemCount).HasColumnName("item_count");
-            entity.Property(e => e.PalletId).HasColumnName("pallet_id");
-            entity.Property(e => e.PositionX)
-                .HasColumnType("decimal(10, 2)")
-                .HasColumnName("position_x");
-            entity.Property(e => e.PositionY)
-                .HasColumnType("decimal(10, 2)")
-                .HasColumnName("position_y");
-            entity.Property(e => e.PositionZ)
-                .HasColumnType("decimal(10, 2)")
-                .HasColumnName("position_z");
-            entity.Property(e => e.ShelfId).HasColumnName("shelf_id");
-            entity.Property(e => e.StackLevel).HasColumnName("stack_level");
-            entity.Property(e => e.TotalWeight)
-                .HasColumnType("decimal(38, 2)")
-                .HasColumnName("total_weight");
-            entity.Property(e => e.ZoneId).HasColumnName("zone_id");
-            entity.Property(e => e.ZoneName)
-                .HasMaxLength(200)
-                .HasColumnName("zone_name");
-        });
-
         modelBuilder.Entity<Warehouse>(entity =>
         {
-            entity.HasKey(e => e.WarehouseId).HasName("PK__warehous__734FE6BF6C791EA0");
+            entity.HasKey(e => e.WarehouseId).HasName("PK__warehous__734FE6BF1E954094");
 
             entity.ToTable("warehouses");
 
-            entity.HasIndex(e => e.OwnerId, "IX_warehouses_owner");
-
             entity.Property(e => e.WarehouseId).HasColumnName("warehouse_id");
             entity.Property(e => e.AllowedItemTypes).HasColumnName("allowed_item_types");
-            entity.Property(e => e.CreatedAt)
-                .HasDefaultValueSql("(getdate())")
-                .HasColumnName("created_at");
-            entity.Property(e => e.Height)
+            entity.Property(e => e.CheckinHeight)
                 .HasColumnType("decimal(10, 2)")
-                .HasColumnName("height");
-            entity.Property(e => e.Length)
+                .HasColumnName("checkin_height");
+            entity.Property(e => e.CheckinLength)
                 .HasColumnType("decimal(10, 2)")
-                .HasColumnName("length");
+                .HasColumnName("checkin_length");
             entity.Property(e => e.CheckinPositionX)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("checkin_position_x");
@@ -827,15 +750,18 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.CheckinPositionZ)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("checkin_position_z");
-            entity.Property(e => e.CheckinLength)
-                .HasColumnType("decimal(10, 2)")
-                .HasColumnName("checkin_length");
             entity.Property(e => e.CheckinWidth)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("checkin_width");
-            entity.Property(e => e.CheckinHeight)
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.Height)
                 .HasColumnType("decimal(10, 2)")
-                .HasColumnName("checkin_height");
+                .HasColumnName("height");
+            entity.Property(e => e.Length)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("length");
             entity.Property(e => e.OwnerId).HasColumnName("owner_id");
             entity.Property(e => e.Status)
                 .HasMaxLength(20)
@@ -861,15 +787,27 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<WarehouseGate>(entity =>
         {
-            entity.HasKey(e => e.GateId);
+            entity.HasKey(e => e.GateId).HasName("PK__warehous__8CB119222B213D7A");
 
             entity.ToTable("warehouse_gates");
 
             entity.Property(e => e.GateId).HasColumnName("gate_id");
-            entity.Property(e => e.WarehouseId).HasColumnName("warehouse_id");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("created_at");
             entity.Property(e => e.GateName)
                 .HasMaxLength(200)
                 .HasColumnName("gate_name");
+            entity.Property(e => e.GateType)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasColumnName("gate_type");
+            entity.Property(e => e.Height)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("height");
+            entity.Property(e => e.Length)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("length");
             entity.Property(e => e.PositionX)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("position_x");
@@ -879,22 +817,10 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.PositionZ)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("position_z");
-            entity.Property(e => e.Length)
-                .HasColumnType("decimal(10, 2)")
-                .HasColumnName("length");
+            entity.Property(e => e.WarehouseId).HasColumnName("warehouse_id");
             entity.Property(e => e.Width)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("width");
-            entity.Property(e => e.Height)
-                .HasColumnType("decimal(10, 2)")
-                .HasColumnName("height");
-            entity.Property(e => e.GateType)
-                .HasMaxLength(20)
-                .IsUnicode(false)
-                .HasColumnName("gate_type");
-            entity.Property(e => e.CreatedAt)
-                .HasDefaultValueSql("(getdate())")
-                .HasColumnName("created_at");
 
             entity.HasOne(d => d.Warehouse).WithMany(p => p.WarehouseGates)
                 .HasForeignKey(d => d.WarehouseId)
@@ -904,7 +830,7 @@ public partial class WarehouseApiContext : DbContext
 
         modelBuilder.Entity<WarehouseZone>(entity =>
         {
-            entity.HasKey(e => e.ZoneId).HasName("PK__warehous__80B401DF586F8FF1");
+            entity.HasKey(e => e.ZoneId).HasName("PK__warehous__80B401DF06F07784");
 
             entity.ToTable("warehouse_zones");
 

@@ -25,7 +25,11 @@ public partial class InboundReceipt
 
     public int CreatedBy { get; set; }
 
-    public string? Status { get; set; }
+    public string Status { get; set; } = null!;
+
+    public string? AutoStackTemplate { get; set; }
+
+    public string StackMode { get; set; } = null!;
 
     public virtual Account CreatedByNavigation { get; set; } = null!;
 

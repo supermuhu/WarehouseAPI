@@ -19,17 +19,15 @@ public partial class PalletLocation
 
     public decimal PositionZ { get; set; }
 
-    public int? StackLevel { get; set; }
+    public int StackLevel { get; set; }
 
     public int? StackedOnPallet { get; set; }
 
-    public bool? IsGround { get; set; }
+    public bool IsGround { get; set; }
 
     public DateTime? AssignedAt { get; set; }
 
     public string? LocationCode { get; set; }
-
-    public virtual ICollection<ItemLocationHistory> ItemLocationHistories { get; set; } = new List<ItemLocationHistory>();
 
     public virtual Pallet Pallet { get; set; } = null!;
 
@@ -38,4 +36,6 @@ public partial class PalletLocation
     public virtual Pallet? StackedOnPalletNavigation { get; set; }
 
     public virtual WarehouseZone Zone { get; set; } = null!;
+
+    public virtual ICollection<ItemLocationHistory> ItemLocationHistories { get; set; } = new List<ItemLocationHistory>();
 }

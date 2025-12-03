@@ -25,13 +25,15 @@ public partial class Item
 
     public decimal? Weight { get; set; }
 
-    public string? Shape { get; set; }
+    public string Shape { get; set; } = null!;
 
-    public int? PriorityLevel { get; set; }
+    public int PriorityLevel { get; set; }
 
-    public bool? IsHeavy { get; set; }
+    public bool IsHeavy { get; set; }
 
-    public bool? IsFragile { get; set; }
+    public bool IsFragile { get; set; }
+
+    public bool IsNonStackable { get; set; }
 
     public string? BatchNumber { get; set; }
 
@@ -51,9 +53,9 @@ public partial class Item
 
     public virtual ICollection<ItemAllocation> ItemAllocations { get; set; } = new List<ItemAllocation>();
 
+    public virtual Product Product { get; set; } = null!;
+
     public virtual ICollection<ItemLocationHistory> ItemLocationHistories { get; set; } = new List<ItemLocationHistory>();
 
     public virtual ICollection<OutboundItem> OutboundItems { get; set; } = new List<OutboundItem>();
-
-    public virtual Product Product { get; set; } = null!;
 }

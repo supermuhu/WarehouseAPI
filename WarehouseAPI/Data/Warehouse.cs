@@ -43,7 +43,7 @@ public partial class Warehouse
 
     public virtual Account Owner { get; set; } = null!;
 
-    public virtual ICollection<WarehouseZone> WarehouseZones { get; set; } = new List<WarehouseZone>();
-
     public virtual ICollection<WarehouseGate> WarehouseGates { get; set; } = new List<WarehouseGate>();
+
+    public virtual ICollection<WarehouseZone> WarehouseZones { get; set; } = new List<WarehouseZone>();
 }

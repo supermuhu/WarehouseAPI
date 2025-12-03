@@ -17,6 +17,13 @@ public class CreateInboundRequestRequest
     [MinLength(1, ErrorMessage = "Phải có ít nhất 1 hàng hóa")]
     public List<InboundItemRequest> Items { get; set; } = new List<InboundItemRequest>();
 
+    public string StackMode { get; set; } = "auto";
+
+    /// <summary>
+    /// Mã template auto stack mà customer chọn (straight/brick/cross).
+    /// </summary>
+    public string? AutoStackTemplate { get; set; }
+
     public string? Notes { get; set; }
 }
 

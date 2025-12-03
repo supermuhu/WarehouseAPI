@@ -29,8 +29,6 @@ public partial class Account
 
     public virtual ICollection<InboundReceipt> InboundReceiptCustomers { get; set; } = new List<InboundReceipt>();
 
-    public virtual ICollection<ItemLocationHistory> ItemLocationHistories { get; set; } = new List<ItemLocationHistory>();
-
     public virtual ICollection<Item> Items { get; set; } = new List<Item>();
 
     public virtual ICollection<OutboundReceipt> OutboundReceiptCreatedByNavigations { get; set; } = new List<OutboundReceipt>();
@@ -42,4 +40,6 @@ public partial class Account
     public virtual ICollection<WarehouseZone> WarehouseZones { get; set; } = new List<WarehouseZone>();
 
     public virtual ICollection<Warehouse> Warehouses { get; set; } = new List<Warehouse>();
+
+    public virtual ICollection<ItemLocationHistory> ItemLocationHistories { get; set; } = new List<ItemLocationHistory>();
 }

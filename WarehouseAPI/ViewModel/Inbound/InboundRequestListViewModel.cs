@@ -16,5 +16,6 @@ public class InboundRequestListViewModel
     public string? Status { get; set; }
     public string? Notes { get; set; }
     public string? CreatedByName { get; set; }
+    public string StackMode { get; set; } = "auto";
 }
 

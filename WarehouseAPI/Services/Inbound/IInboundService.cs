@@ -12,6 +12,7 @@ namespace WarehouseAPI.Services.Inbound
         ApiResponse<List<InboundRequestListViewModel>> GetInboundRequests(int? accountId, string role, int? warehouseId, int? zoneId, string? status);
         ApiResponse<InboundRequestDetailViewModel> GetInboundRequestDetail(int receiptId, int? accountId, string role);
         ApiResponse<object> UpdateInboundRequestStatus(int receiptId, int? accountId, string role, UpdateInboundRequestStatusRequest request);
+        ApiResponse<object> SaveManualStackLayout(int receiptId, int? accountId, string role, ManualStackLayoutRequest request);
     }
 }
 

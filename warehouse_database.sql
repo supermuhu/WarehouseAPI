@@ -56,25 +56,25 @@ END
 IF NOT EXISTS (SELECT 1 FROM accounts WHERE username = 'chukhoa')
 BEGIN
     INSERT INTO accounts (username, password_hash, full_name, email, phone, role, status)
-    VALUES ('chukhoa', 'owner123', N'Chủ kho', 'owner@example.com', '0900000001', 'warehouse_owner', 'active');
+    VALUES ('chukhoa', '$2a$11$BWNG5pW0X8ywfQyHsMYUBeEU8sm5kuQoDK40I.c7OA0CcvHskB..2', N'Chủ kho', 'owner@example.com', '0900000001', 'warehouse_owner', 'active');
 END
 
 IF NOT EXISTS (SELECT 1 FROM accounts WHERE username = 'customer_a')
 BEGIN
     INSERT INTO accounts (username, password_hash, full_name, email, phone, role, status)
-    VALUES ('customer_a', 'cust123', N'Khách hàng A - Lan', 'customer_a@example.com', '0900000002', 'customer', 'active');
+    VALUES ('customer_a', '$2a$11$BWNG5pW0X8ywfQyHsMYUBeEU8sm5kuQoDK40I.c7OA0CcvHskB..2', N'Khách hàng A - Lan', 'customer_a@example.com', '0900000002', 'customer', 'active');
 END
 
 IF NOT EXISTS (SELECT 1 FROM accounts WHERE username = 'customer_b')
 BEGIN
     INSERT INTO accounts (username, password_hash, full_name, email, phone, role, status)
-    VALUES ('customer_b', 'cust123', N'Khách hàng B - Hùng', 'customer_b@example.com', '0900000003', 'customer', 'active');
+    VALUES ('customer_b', '$2a$11$BWNG5pW0X8ywfQyHsMYUBeEU8sm5kuQoDK40I.c7OA0CcvHskB..2', N'Khách hàng B - Hùng', 'customer_b@example.com', '0900000003', 'customer', 'active');
 END
 
 IF NOT EXISTS (SELECT 1 FROM accounts WHERE username = 'customer_c')
 BEGIN
     INSERT INTO accounts (username, password_hash, full_name, email, phone, role, status)
-    VALUES ('customer_c', 'cust123', N'Khách hàng C - Mai', 'customer_c@example.com', '0900000004', 'customer', 'active');
+    VALUES ('customer_c', '$2a$11$BWNG5pW0X8ywfQyHsMYUBeEU8sm5kuQoDK40I.c7OA0CcvHskB..2', N'Khách hàng C - Mai', 'customer_c@example.com', '0900000004', 'customer', 'active');
 END
 
 GO
@@ -315,6 +315,7 @@ CREATE TABLE products (
     standard_weight DECIMAL(10,2),
     is_fragile BIT NOT NULL DEFAULT 0,
     is_hazardous BIT NOT NULL DEFAULT 0,
+    is_non_stackable BIT NOT NULL DEFAULT 0,
     storage_conditions NVARCHAR(MAX),
     create_user INT NULL,
     created_at DATETIME2 DEFAULT GETDATE(),
@@ -356,6 +357,7 @@ CREATE TABLE items (
     priority_level INT NOT NULL DEFAULT 5,
     is_heavy BIT NOT NULL DEFAULT 0,
     is_fragile BIT NOT NULL DEFAULT 0,
+    is_non_stackable BIT NOT NULL DEFAULT 0,
     batch_number NVARCHAR(100),
     manufacturing_date DATE,
     expiry_date DATE,
@@ -383,8 +385,6 @@ CREATE TABLE item_allocations (
     CONSTRAINT FK_item_allocations_item FOREIGN KEY (item_id) REFERENCES items(item_id),
     CONSTRAINT FK_item_allocations_pallet FOREIGN KEY (pallet_id) REFERENCES pallets(pallet_id)
 );
-GO
-
 CREATE INDEX IX_item_allocations_pallet ON item_allocations(pallet_id);
 GO
 
@@ -401,11 +401,14 @@ CREATE TABLE inbound_receipts (
     notes NVARCHAR(MAX),
     created_by INT NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    auto_stack_template VARCHAR(50) NULL,
+    stack_mode VARCHAR(20) NOT NULL DEFAULT 'auto' CHECK (stack_mode IN ('auto', 'manual')),
     CONSTRAINT FK_inbound_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses(warehouse_id),
     CONSTRAINT FK_inbound_customer FOREIGN KEY (customer_id) REFERENCES accounts(account_id),
     CONSTRAINT FK_inbound_created_by FOREIGN KEY (created_by) REFERENCES accounts(account_id)
 );
 GO
+
 
 CREATE INDEX IX_inbound_customer ON inbound_receipts(customer_id);
 CREATE INDEX IX_inbound_date ON inbound_receipts(inbound_date);
@@ -425,6 +428,24 @@ CREATE TABLE inbound_items (
 );
 GO
 
+CREATE TABLE inbound_item_stack_units (
+    layout_id INT IDENTITY(1,1) PRIMARY KEY,
+    inbound_item_id INT NOT NULL,
+    unit_index INT NOT NULL,
+    local_x DECIMAL(10,2) NOT NULL,
+    local_y DECIMAL(10,2) NOT NULL,
+    local_z DECIMAL(10,2) NOT NULL,
+    length DECIMAL(10,2) NOT NULL,
+    width DECIMAL(10,2) NOT NULL,
+    height DECIMAL(10,2) NOT NULL,
+    rotation_y DECIMAL(10,2) NOT NULL,
+    CONSTRAINT FK_inbound_item_stack_units_inbound_item FOREIGN KEY (inbound_item_id) REFERENCES inbound_items(inbound_item_id)
+);
+GO
+
+CREATE INDEX IX_inbound_item_stack_units_inbound_item ON inbound_item_stack_units(inbound_item_id);
+GO
+
 -- Phiếu xuất kho
 CREATE TABLE outbound_receipts (
     receipt_id INT IDENTITY(1,1) PRIMARY KEY,
@@ -439,39 +460,6 @@ CREATE TABLE outbound_receipts (
     CONSTRAINT FK_outbound_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses(warehouse_id),
     CONSTRAINT FK_outbound_customer FOREIGN KEY (customer_id) REFERENCES accounts(account_id),
     CONSTRAINT FK_outbound_created_by FOREIGN KEY (created_by) REFERENCES accounts(account_id)
-);
-GO
-
-CREATE INDEX IX_outbound_customer ON outbound_receipts(customer_id);
-CREATE INDEX IX_outbound_warehouse ON outbound_receipts(warehouse_id);
-GO
-
--- Chi tiết phiếu xuất
-CREATE TABLE outbound_items (
-    outbound_item_id INT IDENTITY(1,1) PRIMARY KEY,
-    receipt_id INT NOT NULL,
-    item_id INT NOT NULL,
-    quantity INT NOT NULL DEFAULT 1,
-    removed_at DATETIME2 DEFAULT GETDATE(),
-    CONSTRAINT FK_outbound_items_receipt FOREIGN KEY (receipt_id) REFERENCES outbound_receipts(receipt_id),
-    CONSTRAINT FK_outbound_items_item FOREIGN KEY (item_id) REFERENCES items(item_id)
-);
-GO
-
--- Lịch sử di chuyển hàng hóa
-CREATE TABLE item_location_history (
-    history_id INT IDENTITY(1,1) PRIMARY KEY,
-    item_id INT NOT NULL,
-    pallet_id INT NULL,
-    location_id INT NULL,
-    action_type VARCHAR(20) NOT NULL,
-    action_date DATETIME2 DEFAULT GETDATE(),
-    performed_by INT NOT NULL,
-    notes NVARCHAR(MAX),
-    CONSTRAINT FK_history_item FOREIGN KEY (item_id) REFERENCES items(item_id),
-    CONSTRAINT FK_history_pallet FOREIGN KEY (pallet_id) REFERENCES pallets(pallet_id),
-    CONSTRAINT FK_history_location FOREIGN KEY (location_id) REFERENCES pallet_locations(location_id),
-    CONSTRAINT FK_history_performed_by FOREIGN KEY (performed_by) REFERENCES accounts(account_id)
 );
 GO
 

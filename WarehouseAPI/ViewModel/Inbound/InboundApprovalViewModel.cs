@@ -15,6 +15,7 @@ public class InboundApprovalViewModel
     public string? Status { get; set; }
     public string? Notes { get; set; }
     public List<InboundApprovalItemViewModel> Items { get; set; } = new List<InboundApprovalItemViewModel>();
+    public string StackMode { get; set; } = "auto";
 }
 
 public class InboundApprovalItemViewModel

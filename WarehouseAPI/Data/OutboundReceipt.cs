@@ -21,13 +21,13 @@ public partial class OutboundReceipt
 
     public int CreatedBy { get; set; }
 
-    public string? Status { get; set; }
+    public string Status { get; set; } = null!;
 
     public virtual Account CreatedByNavigation { get; set; } = null!;
 
     public virtual Account Customer { get; set; } = null!;
 
-    public virtual ICollection<OutboundItem> OutboundItems { get; set; } = new List<OutboundItem>();
-
     public virtual Warehouse Warehouse { get; set; } = null!;
+
+    public virtual ICollection<OutboundItem> OutboundItems { get; set; } = new List<OutboundItem>();
 }
