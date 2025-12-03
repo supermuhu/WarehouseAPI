@@ -446,13 +446,12 @@ $RECYCLE.BIN/
 
 # User-specific files
 appsettings.Development.json
+appsettings.*.Development.json
+appsettings.Local.json
 
 # Environment variables
 .env
-.env.local
-.env.development
-.env.test
-.env.production
+.env.*
 
 # Database files
 *.db
@@ -461,6 +460,7 @@ appsettings.Development.json
 
 # Logs
 logs/
+log/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -478,4 +478,3 @@ Thumbs.db
 temp/
 tmp/
 *.bak
-
