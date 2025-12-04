@@ -123,6 +123,8 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public string? PalletType { get; set; }
         public decimal? MaxWeight { get; set; }
         public decimal? MaxStackHeight { get; set; }
+
+        public string? PalletQrContent { get; set; }
     }
 
     /// <summary>

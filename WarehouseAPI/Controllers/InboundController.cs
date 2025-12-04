@@ -171,5 +171,24 @@ namespace WarehouseAPI.Controllers
             var result = _inboundService.SaveManualStackLayout(receiptId, accountId, role, request);
             return StatusCode(result.StatusCode, result);
         }
+
+        /// <summary>
+        /// Lấy dữ liệu phục vụ in phiếu nhập kho (bao gồm pallet, vị trí và hàng hóa trên pallet)
+        /// </summary>
+        /// <param name="receiptId">ID phiếu inbound</param>
+        [HttpGet("{receiptId}/print-data")]
+        public IActionResult GetInboundReceiptPrintData(int receiptId)
+        {
+            var accountId = Utils.GetCurrentAccountId(User);
+            var role = Utils.GetCurrentRole(User);
+
+            var result = _inboundService.GetInboundReceiptPrintData(receiptId, accountId, role);
+            if (result.StatusCode == 200)
+            {
+                return Ok(result);
+            }
+
+            return StatusCode(result.StatusCode, result);
+        }
     }
 }

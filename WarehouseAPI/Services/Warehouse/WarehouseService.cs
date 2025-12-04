@@ -306,6 +306,163 @@ namespace WarehouseAPI.Services.Warehouse
                     }
                 }
 
+                // Tính nội dung QR cho từng pallet từ thông tin pallet và danh sách hàng trên pallet
+                if (pallets.Any())
+                {
+                    foreach (var pallet in pallets)
+                    {
+                        var palletItems = items.Where(i => i.PalletId == pallet.PalletId).ToList();
+
+                        if (!palletItems.Any())
+                        {
+                            pallet.PalletQrContent = $"PALLET|{pallet.PalletId}|WH={warehouseId}";
+                            continue;
+                        }
+
+                        var qrLines = new List<string>();
+
+                        qrLines.Add($"Vị trí: ({pallet.PositionX}, {pallet.PositionY}, {pallet.PositionZ})");
+                        qrLines.Add($"Kích thước pallet: {pallet.PalletLength}m × {pallet.PalletWidth}m × {pallet.PalletHeight}m");
+                        qrLines.Add("------------------");
+                        qrLines.Add("Danh sách hàng trên pallet:");
+
+                        foreach (var item in palletItems)
+                        {
+                            var name = item.ProductName ?? item.ItemName ?? item.QrCode ?? "Hàng hóa";
+                            qrLines.Add(name);
+
+                            if (!string.IsNullOrWhiteSpace(item.ProductCode))
+                            {
+                                qrLines.Add($"Mã SP: {item.ProductCode}");
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(item.CustomerName))
+                            {
+                                qrLines.Add($"Khách hàng: {item.CustomerName}");
+                            }
+
+                            string unitSize;
+                            if (item.StandardLength.HasValue && item.StandardWidth.HasValue && item.StandardHeight.HasValue)
+                            {
+                                unitSize = $"{item.StandardLength}m × {item.StandardWidth}m × {item.StandardHeight}m";
+                            }
+                            else
+                            {
+                                unitSize = "N/A";
+                            }
+
+                            var stackSize = $"{item.Length}m × {item.Width}m × {item.Height}m";
+
+                            var qty = item.UnitQuantity;
+                            string qtyText;
+                            if (qty.HasValue)
+                            {
+                                qtyText = string.IsNullOrWhiteSpace(item.Unit)
+                                    ? qty.Value.ToString()
+                                    : $"{qty.Value} {item.Unit}";
+                            }
+                            else
+                            {
+                                qtyText = "N/A";
+                            }
+
+                            qrLines.Add($"Kích thước thùng (1 đơn vị): {unitSize}");
+                            qrLines.Add($"Kích thước khối hàng trên pallet: {stackSize}");
+                            qrLines.Add($"Số lượng đơn vị trên pallet: {qtyText}");
+
+                            string? weightLine = null;
+                            var hasStdWeight = item.StandardWeight.HasValue;
+                            var hasQty = qty.HasValue;
+
+                            if (hasStdWeight && hasQty)
+                            {
+                                var totalWeight = item.StandardWeight!.Value * qty!.Value;
+                                weightLine = $"Trọng lượng: {totalWeight} kg / Chuẩn: {item.StandardWeight} kg";
+                            }
+                            else if (item.Weight.HasValue || item.StandardWeight.HasValue)
+                            {
+                                var parts = new List<string>();
+                                if (item.Weight.HasValue)
+                                {
+                                    parts.Add($"{item.Weight.Value} kg");
+                                }
+                                if (item.StandardWeight.HasValue)
+                                {
+                                    parts.Add($"Chuẩn: {item.StandardWeight.Value} kg");
+                                }
+
+                                if (parts.Count > 0)
+                                {
+                                    weightLine = $"Trọng lượng: {string.Join(" / ", parts)}";
+                                }
+                            }
+
+                            if (!string.IsNullOrEmpty(weightLine))
+                            {
+                                qrLines.Add(weightLine);
+                            }
+
+                            if (item.ManufacturingDate.HasValue)
+                            {
+                                qrLines.Add($"Ngày sản xuất: {item.ManufacturingDate.Value:yyyy-MM-dd}");
+                            }
+
+                            if (item.ExpiryDate.HasValue)
+                            {
+                                qrLines.Add($"Hạn sử dụng: {item.ExpiryDate.Value:yyyy-MM-dd}");
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(item.ProductDescription))
+                            {
+                                qrLines.Add($"Mô tả sản phẩm: {item.ProductDescription}");
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(item.StorageConditions))
+                            {
+                                qrLines.Add($"Lưu ý bảo quản: {item.StorageConditions}");
+                            }
+
+                            if (item.UnitPrice.HasValue || item.TotalAmount.HasValue)
+                            {
+                                var unitPriceText = item.UnitPrice.HasValue
+                                    ? item.UnitPrice.Value.ToString("#,0.##")
+                                    : string.Empty;
+
+                                var totalAmountText = item.TotalAmount.HasValue
+                                    ? item.TotalAmount.Value.ToString("#,0.##")
+                                    : string.Empty;
+
+                                if (!string.IsNullOrEmpty(unitPriceText) && !string.IsNullOrEmpty(totalAmountText))
+                                {
+                                    qrLines.Add($"Giá: {unitPriceText} / đơn vị – Thành tiền: {totalAmountText}");
+                                }
+                                else if (!string.IsNullOrEmpty(unitPriceText))
+                                {
+                                    qrLines.Add($"Giá: {unitPriceText} / đơn vị");
+                                }
+                                else if (!string.IsNullOrEmpty(totalAmountText))
+                                {
+                                    qrLines.Add($"Thành tiền: {totalAmountText}");
+                                }
+                            }
+
+                            if (item.IsFragile == true)
+                            {
+                                qrLines.Add("⚠ Dễ vỡ");
+                            }
+
+                            if (item.IsHeavy == true)
+                            {
+                                qrLines.Add("⚠ Hàng nặng");
+                            }
+
+                            qrLines.Add(string.Empty);
+                        }
+
+                        pallet.PalletQrContent = string.Join("\n", qrLines);
+                    }
+                }
+
                 var result = new Warehouse3DViewModel
                 {
                     WarehouseId = warehouse.WarehouseId,

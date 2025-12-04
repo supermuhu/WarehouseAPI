@@ -1,5 +1,11 @@
 using Microsoft.EntityFrameworkCore;
+using QuestPDF.Fluent;
+using QuestPDF.Helpers;
+using QuestPDF.Infrastructure;
+using QRCoder;
+using System.Globalization;
 using System.Text.Json;
+using System.IO;
 using WarehouseAPI.Data;
 using WarehouseAPI.ModelView.Common;
 using WarehouseAPI.ModelView.Inbound;
@@ -9,10 +15,39 @@ namespace WarehouseAPI.Services.Inbound
     public class InboundService : IInboundService
     {
         private readonly WarehouseApiContext _context;
+        private static bool _questPdfConfigured = false;
+        private static readonly object _questPdfLock = new();
 
         public InboundService(WarehouseApiContext context)
         {
             _context = context;
+        }
+
+        private static void EnsureQuestPdfConfigured()
+        {
+            if (_questPdfConfigured) return;
+            lock (_questPdfLock)
+            {
+                if (_questPdfConfigured) return;
+                QuestPDF.Settings.License = LicenseType.Community;
+                _questPdfConfigured = true;
+            }
+        }
+
+        private static IContainer PdfHeaderCell(IContainer container)
+        {
+            return container
+                .Padding(2)
+                .BorderBottom(1)
+                .BorderColor(Colors.Grey.Darken2)
+                .DefaultTextStyle(TextStyle.Default.SemiBold().FontSize(9));
+        }
+
+        private static IContainer PdfBodyCell(IContainer container)
+        {
+            return container
+                .Padding(2)
+                .DefaultTextStyle(TextStyle.Default.FontSize(9));
         }
 
         private static decimal GetShelfClearHeight(Rack rack, Shelf shelf)
@@ -341,6 +376,238 @@ namespace WarehouseAPI.Services.Inbound
                     null,
                     500
                 );
+            }
+        }
+
+        private void TryGenerateInboundReceiptPdf(InboundReceiptPrintViewModel model)
+        {
+            try
+            {
+                EnsureQuestPdfConfigured();
+
+                var rootDir = Directory.GetCurrentDirectory();
+                var customerDir = Path.Combine(rootDir, "wwwroot", "inbound", model.CustomerId.ToString());
+                Directory.CreateDirectory(customerDir);
+
+                var safeReceiptNumber = string.Concat((model.ReceiptNumber ?? string.Empty)
+                    .Where(ch => !Path.GetInvalidFileNameChars().Contains(ch)));
+                if (string.IsNullOrWhiteSpace(safeReceiptNumber))
+                {
+                    safeReceiptNumber = $"IN-{model.ReceiptId}";
+                }
+
+                var fileName = $"{safeReceiptNumber}.pdf";
+                var filePath = Path.Combine(customerDir, fileName);
+
+                var viCulture = new CultureInfo("vi-VN");
+
+                var allItems = model.Pallets.SelectMany(p => p.Items).ToList();
+                var totalQuantity = allItems.Sum(i => (decimal)i.Quantity);
+                var totalAmount = allItems.Sum(i => i.TotalAmount ?? 0m);
+
+                var document = Document.Create(container =>
+                {
+                    container.Page(page =>
+                    {
+                        page.Size(PageSizes.A4);
+                        page.Margin(30);
+                        page.PageColor(Colors.White);
+
+                        page.Content().Column(col =>
+                        {
+                            col.Spacing(10);
+
+                            col.Item().Row(row =>
+                            {
+                                row.RelativeItem().Column(left =>
+                                {
+                                    left.Item().Text(text =>
+                                    {
+                                        text.Span("Đơn vị: ").Bold().FontSize(10);
+                                        text.Span(model.WarehouseName ?? string.Empty).FontSize(10);
+                                    });
+
+                                    left.Item().Text(text =>
+                                    {
+                                        text.Span("Khách hàng: ").Bold().FontSize(10);
+                                        text.Span(model.CustomerName ?? string.Empty).FontSize(10);
+                                    });
+                                });
+                            });
+
+                            col.Item().AlignCenter().Text(text =>
+                            {
+                                text.Span("PHIẾU NHẬP KHO").FontSize(16).Bold();
+                            });
+
+                            var date = model.InboundDate ?? DateTime.Now;
+                            col.Item().AlignCenter().Text(text =>
+                            {
+                                text.Span($"Ngày {date:dd} tháng {date:MM} năm {date:yyyy}").FontSize(10);
+                            });
+
+                            col.Item().Text(text =>
+                            {
+                                text.Span("Số phiếu: ").Bold().FontSize(10);
+                                text.Span(model.ReceiptNumber ?? string.Empty).FontSize(10);
+                            });
+
+                            col.Item().Text(text =>
+                            {
+                                text.Span("Kho: ").Bold().FontSize(10);
+                                var whName = model.WarehouseName ?? string.Empty;
+                                text.Span(string.IsNullOrEmpty(whName)
+                                    ? $"#{model.WarehouseId}"
+                                    : $"{whName} (#{model.WarehouseId})").FontSize(10);
+                                if (!string.IsNullOrWhiteSpace(model.ZoneName))
+                                {
+                                    text.Span($", Khu vực: {model.ZoneName}").FontSize(10);
+                                }
+                            });
+
+                            if (!string.IsNullOrWhiteSpace(model.Notes))
+                            {
+                                col.Item().Text(text =>
+                                {
+                                    text.Span("Ghi chú: ").Bold().FontSize(10);
+                                    text.Span(model.Notes ?? string.Empty).FontSize(10);
+                                });
+                            }
+
+                            col.Item().LineHorizontal(1).LineColor(Colors.Grey.Darken2);
+
+                            col.Item().Table(table =>
+                            {
+                                table.ColumnsDefinition(columns =>
+                                {
+                                    columns.ConstantColumn(25);   // STT
+                                    columns.RelativeColumn(4);    // Tên hàng hóa
+                                    columns.RelativeColumn(2);    // Mã số
+                                    columns.RelativeColumn(1.5f); // ĐVT
+                                    columns.RelativeColumn(2);    // Theo chứng từ
+                                    columns.RelativeColumn(2);    // Thực nhập
+                                    columns.RelativeColumn(2);    // Đơn giá
+                                    columns.RelativeColumn(2);    // Thành tiền
+                                });
+
+                                table.Header(header =>
+                                {
+                                    header.Cell().Element(PdfHeaderCell).Text("STT");
+                                    header.Cell().Element(PdfHeaderCell).Text("Tên hàng hóa");
+                                    header.Cell().Element(PdfHeaderCell).Text("Mã số");
+                                    header.Cell().Element(PdfHeaderCell).Text("Đơn vị tính");
+                                    header.Cell().Element(PdfHeaderCell).Text("Theo chứng từ");
+                                    header.Cell().Element(PdfHeaderCell).Text("Thực nhập");
+                                    header.Cell().Element(PdfHeaderCell).Text("Đơn giá");
+                                    header.Cell().Element(PdfHeaderCell).Text("Thành tiền");
+                                });
+
+                                var index = 1;
+                                foreach (var pallet in model.Pallets)
+                                {
+                                    foreach (var item in pallet.Items)
+                                    {
+                                        var qtyText = item.Quantity.ToString("N0", viCulture);
+                                        var unitPriceText = item.UnitPrice.HasValue
+                                            ? item.UnitPrice.Value.ToString("#,0.##", viCulture)
+                                            : string.Empty;
+                                        var amountText = item.TotalAmount.HasValue
+                                            ? item.TotalAmount.Value.ToString("#,0.##", viCulture)
+                                            : string.Empty;
+
+                                        table.Cell().Element(PdfBodyCell).Text(index.ToString());
+
+                                        table.Cell().Element(PdfBodyCell).Text(text =>
+                                        {
+                                            var name = item.ProductName ?? item.ItemName ?? string.Empty;
+                                            text.Line(name);
+                                            if (!string.IsNullOrWhiteSpace(item.BatchNumber))
+                                            {
+                                                text.Line($"Lô: {item.BatchNumber}");
+                                            }
+                                            if (!string.IsNullOrWhiteSpace(pallet.PalletBarcode))
+                                            {
+                                                text.Line($"Pallet: {pallet.PalletBarcode}");
+                                            }
+                                            if (!string.IsNullOrWhiteSpace(pallet.LocationCode))
+                                            {
+                                                text.Line($"Vị trí: {pallet.LocationCode}");
+                                            }
+                                        });
+
+                                        table.Cell().Element(PdfBodyCell).Text(item.ProductCode ?? string.Empty);
+                                        table.Cell().Element(PdfBodyCell).Text(item.Unit ?? string.Empty);
+
+                                        // Hiện tại chưa tách riêng số lượng theo chứng từ và thực nhập,
+                                        // sử dụng cùng một Quantity cho cả hai cột.
+                                        table.Cell().Element(PdfBodyCell).AlignRight().Text(qtyText);
+                                        table.Cell().Element(PdfBodyCell).AlignRight().Text(qtyText);
+
+                                        table.Cell().Element(PdfBodyCell).AlignRight().Text(unitPriceText);
+                                        table.Cell().Element(PdfBodyCell).AlignRight().Text(amountText);
+
+                                        index++;
+                                    }
+                                }
+
+                                if (allItems.Any())
+                                {
+                                    table.Cell().Element(PdfBodyCell).Text(string.Empty);
+                                    table.Cell().Element(PdfBodyCell).Text("Cộng");
+                                    table.Cell().Element(PdfBodyCell).Text(string.Empty);
+                                    table.Cell().Element(PdfBodyCell).Text(string.Empty);
+                                    table.Cell().Element(PdfBodyCell).AlignRight()
+                                        .Text(totalQuantity.ToString("N0", viCulture));
+                                    table.Cell().Element(PdfBodyCell).AlignRight()
+                                        .Text(totalQuantity.ToString("N0", viCulture));
+                                    table.Cell().Element(PdfBodyCell).Text(string.Empty);
+                                    table.Cell().Element(PdfBodyCell).AlignRight()
+                                        .Text(totalAmount.ToString("#,0.##", viCulture));
+                                }
+                            });
+
+                            col.Item().Height(10);
+
+                            col.Item().Row(row =>
+                            {
+                                row.RelativeItem().AlignCenter().Text(text =>
+                                {
+                                    text.Span("Người lập phiếu").FontSize(10).SemiBold();
+                                });
+                                row.RelativeItem().AlignCenter().Text(text =>
+                                {
+                                    text.Span("Người giao hàng").FontSize(10).SemiBold();
+                                });
+                                row.RelativeItem().AlignCenter().Text(text =>
+                                {
+                                    text.Span("Thủ kho").FontSize(10).SemiBold();
+                                });
+                            });
+
+                            col.Item().Row(row =>
+                            {
+                                row.RelativeItem().AlignCenter().Text(text =>
+                                {
+                                    text.Span("(Ký, họ tên)").FontSize(9).Italic();
+                                });
+                                row.RelativeItem().AlignCenter().Text(text =>
+                                {
+                                    text.Span("(Ký, họ tên)").FontSize(9).Italic();
+                                });
+                                row.RelativeItem().AlignCenter().Text(text =>
+                                {
+                                    text.Span("(Ký, họ tên)").FontSize(9).Italic();
+                                });
+                            });
+                        });
+                    });
+                });
+
+                document.GeneratePdf(filePath);
+            }
+            catch
+            {
+                // Ignore PDF generation errors to avoid breaking approval flow
             }
         }
 
@@ -1434,6 +1701,18 @@ namespace WarehouseAPI.Services.Inbound
                                 {
                                     var basePallet = baseLoc.Pallet;
 
+                                    var baseInboundItem = inboundItems.FirstOrDefault(x => x.PalletId == basePallet.PalletId);
+                                    if (baseInboundItem == null)
+                                    {
+                                        continue;
+                                    }
+
+                                    // Chỉ xếp chồng khi pallet dưới và pallet trên chứa cùng loại hàng (cùng ProductId)
+                                    if (baseInboundItem.Item.ProductId != ii.Item.ProductId)
+                                    {
+                                        continue;
+                                    }
+
                                     // Không xếp chồng nếu pallet dưới hoặc pallet trên thuộc loại không được xếp chồng
                                     if (nonStackablePalletIds.Contains(basePallet.PalletId) || nonStackablePalletIds.Contains(pallet.PalletId))
                                     {
@@ -2455,6 +2734,19 @@ namespace WarehouseAPI.Services.Inbound
 
                 transaction.Commit();
 
+                try
+                {
+                    var printData = GetInboundReceiptPrintData(receipt.ReceiptId, accountId, role);
+                    if (printData.Success && printData.Data != null)
+                    {
+                        TryGenerateInboundReceiptPdf(printData.Data);
+                    }
+                }
+                catch
+                {
+                    // Bỏ qua lỗi sinh PDF để không ảnh hưởng đến kết quả duyệt
+                }
+
                 return ApiResponse<object>.Ok(
                     new { ReceiptId = receipt.ReceiptId, Status = receipt.Status },
                     "Duyệt yêu cầu và xếp pallet vào kho thành công"
@@ -2693,6 +2985,168 @@ namespace WarehouseAPI.Services.Inbound
             {
                 return ApiResponse<InboundRequestDetailViewModel>.Fail(
                     $"Lỗi khi lấy chi tiết yêu cầu: {ex.Message}",
+                    "INTERNAL_ERROR",
+                    null,
+                    500
+                );
+            }
+        }
+
+        public ApiResponse<InboundReceiptPrintViewModel> GetInboundReceiptPrintData(int receiptId, int? accountId, string role)
+        {
+            try
+            {
+                if (accountId == null)
+                {
+                    return ApiResponse<InboundReceiptPrintViewModel>.Fail(
+                        "Token không hợp lệ",
+                        "UNAUTHORIZED",
+                        null,
+                        401
+                    );
+                }
+
+                var receipt = _context.InboundReceipts
+                    .Include(r => r.Warehouse)
+                    .Include(r => r.Customer)
+                    .Include(r => r.CreatedByNavigation)
+                    .Include(r => r.InboundItems)
+                        .ThenInclude(ii => ii.Item)
+                            .ThenInclude(i => i.Product)
+                    .Include(r => r.InboundItems)
+                        .ThenInclude(ii => ii.Pallet)
+                    .FirstOrDefault(r => r.ReceiptId == receiptId);
+
+                if (receipt == null)
+                {
+                    return ApiResponse<InboundReceiptPrintViewModel>.Fail(
+                        "Không tìm thấy yêu cầu gửi hàng",
+                        "NOT_FOUND",
+                        null,
+                        404
+                    );
+                }
+
+                if (role == "customer" && receipt.CustomerId != accountId.Value)
+                {
+                    return ApiResponse<InboundReceiptPrintViewModel>.Fail(
+                        "Bạn không có quyền xem yêu cầu này",
+                        "FORBIDDEN",
+                        null,
+                        403
+                    );
+                }
+
+                string? zoneName = null;
+                if (receipt.ZoneId.HasValue)
+                {
+                    zoneName = _context.WarehouseZones
+                        .Where(z => z.ZoneId == receipt.ZoneId.Value)
+                        .Select(z => z.ZoneName)
+                        .FirstOrDefault();
+                }
+
+                var palletIds = receipt.InboundItems
+                    .Select(ii => ii.PalletId)
+                    .Distinct()
+                    .ToList();
+
+                var palletLocations = _context.PalletLocations
+                    .Include(pl => pl.Zone)
+                    .Where(pl => palletIds.Contains(pl.PalletId))
+                    .ToList();
+
+                var latestLocationByPallet = palletLocations
+                    .GroupBy(pl => pl.PalletId)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g
+                            .OrderByDescending(x => x.AssignedAt ?? DateTime.MinValue)
+                            .First()
+                    );
+
+                var palletGroups = receipt.InboundItems
+                    .GroupBy(ii => ii.PalletId)
+                    .ToList();
+
+                var palletViewModels = new List<InboundReceiptPrintPalletViewModel>();
+
+                foreach (var group in palletGroups)
+                {
+                    var firstItem = group.First();
+                    var pallet = firstItem.Pallet;
+
+                    latestLocationByPallet.TryGetValue(pallet.PalletId, out var loc);
+
+                    var palletVm = new InboundReceiptPrintPalletViewModel
+                    {
+                        PalletId = pallet.PalletId,
+                        PalletBarcode = pallet.Barcode,
+                        ZoneId = loc?.ZoneId ?? receipt.ZoneId ?? 0,
+                        ZoneName = loc?.Zone?.ZoneName ?? zoneName,
+                        LocationCode = loc?.LocationCode,
+                        PositionX = loc?.PositionX ?? 0,
+                        PositionY = loc?.PositionY ?? 0,
+                        PositionZ = loc?.PositionZ ?? 0,
+                        IsGround = loc?.IsGround ?? false,
+                        StackLevel = loc?.StackLevel ?? 1,
+                        ShelfId = loc?.ShelfId,
+                        PalletQrContent = $"PALLET|{pallet.PalletId}|{receipt.WarehouseId}",
+                        Items = group.Select(ii => new InboundReceiptPrintItemViewModel
+                        {
+                            InboundItemId = ii.InboundItemId,
+                            ItemId = ii.ItemId,
+                            QrCode = ii.Item.QrCode,
+                            ItemName = ii.Item.ItemName,
+                            ProductId = ii.Item.ProductId,
+                            ProductCode = ii.Item.Product.ProductCode,
+                            ProductName = ii.Item.Product.ProductName,
+                            Unit = ii.Item.Product.Unit,
+                            Quantity = ii.Quantity,
+                            ManufacturingDate = ii.Item.ManufacturingDate.HasValue
+                                ? ii.Item.ManufacturingDate.Value.ToDateTime(TimeOnly.MinValue)
+                                : null,
+                            ExpiryDate = ii.Item.ExpiryDate.HasValue
+                                ? ii.Item.ExpiryDate.Value.ToDateTime(TimeOnly.MinValue)
+                                : null,
+                            BatchNumber = ii.Item.BatchNumber,
+                            UnitPrice = ii.Item.UnitPrice,
+                            TotalAmount = ii.Item.TotalAmount
+                        }).ToList()
+                    };
+
+                    palletViewModels.Add(palletVm);
+                }
+
+                var printViewModel = new InboundReceiptPrintViewModel
+                {
+                    ReceiptId = receipt.ReceiptId,
+                    ReceiptNumber = receipt.ReceiptNumber,
+                    Status = receipt.Status,
+                    InboundDate = receipt.InboundDate,
+                    WarehouseId = receipt.WarehouseId,
+                    WarehouseName = receipt.Warehouse.WarehouseName,
+                    ZoneId = receipt.ZoneId,
+                    ZoneName = zoneName,
+                    CustomerId = receipt.CustomerId,
+                    CustomerName = receipt.Customer.FullName,
+                    CreatedByName = receipt.CreatedByNavigation.FullName,
+                    Notes = receipt.Notes,
+                    TotalItems = receipt.TotalItems,
+                    TotalPallets = receipt.TotalPallets,
+                    StackMode = receipt.StackMode,
+                    Pallets = palletViewModels
+                };
+
+                return ApiResponse<InboundReceiptPrintViewModel>.Ok(
+                    printViewModel,
+                    "Lấy dữ liệu in phiếu nhập kho thành công"
+                );
+            }
+            catch (Exception ex)
+            {
+                return ApiResponse<InboundReceiptPrintViewModel>.Fail(
+                    $"Lỗi khi lấy dữ liệu in phiếu nhập: {ex.Message}",
                     "INTERNAL_ERROR",
                     null,
                     500
