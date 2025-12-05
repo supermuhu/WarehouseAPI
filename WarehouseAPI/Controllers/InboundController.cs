@@ -76,6 +76,20 @@ namespace WarehouseAPI.Controllers
             return StatusCode(result.StatusCode, result);
         }
 
+        [HttpPost("{receiptId}/preview-approve-layout")]
+        public IActionResult PreviewApproveInboundLayout(int receiptId, [FromBody] ApproveInboundLayoutRequest? request)
+            {
+                var accountId = Utils.GetCurrentAccountId(User);
+                var role = Utils.GetCurrentRole(User);
+
+            var result = _inboundService.PreviewApproveInboundLayout(receiptId, accountId, role, request);
+            if (result.StatusCode == 200)
+            {
+                return Ok(result);
+            }
+            return StatusCode(result.StatusCode, result);
+        }
+
         /// <summary>
         /// Duyệt yêu cầu inbound: sắp xếp pallet vào các khu vực của customer và tạo ItemAllocation
         /// Sau khi duyệt, yêu cầu sẽ chuyển sang trạng thái completed và xuất hiện trong kho 3D.

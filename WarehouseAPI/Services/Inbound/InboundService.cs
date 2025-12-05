@@ -1701,18 +1701,6 @@ namespace WarehouseAPI.Services.Inbound
                                 {
                                     var basePallet = baseLoc.Pallet;
 
-                                    var baseInboundItem = inboundItems.FirstOrDefault(x => x.PalletId == basePallet.PalletId);
-                                    if (baseInboundItem == null)
-                                    {
-                                        continue;
-                                    }
-
-                                    // Chỉ xếp chồng khi pallet dưới và pallet trên chứa cùng loại hàng (cùng ProductId)
-                                    if (baseInboundItem.Item.ProductId != ii.Item.ProductId)
-                                    {
-                                        continue;
-                                    }
-
                                     // Không xếp chồng nếu pallet dưới hoặc pallet trên thuộc loại không được xếp chồng
                                     if (nonStackablePalletIds.Contains(basePallet.PalletId) || nonStackablePalletIds.Contains(pallet.PalletId))
                                     {
@@ -1808,6 +1796,265 @@ namespace WarehouseAPI.Services.Inbound
             {
                 return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
                     $"Lỗi khi tối ưu layout inbound: {ex.Message}",
+                    "INTERNAL_ERROR",
+                    null,
+                    500
+                );
+            }
+        }
+
+        public ApiResponse<InboundOptimizeLayoutViewModel> PreviewApproveInboundLayout(int receiptId, int? accountId, string role, ApproveInboundLayoutRequest? request)
+        {
+            try
+            {
+                if (accountId == null)
+                {
+                    return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Token không hợp lệ",
+                        "UNAUTHORIZED",
+                        null,
+                        401
+                    );
+                }
+
+                if (role != "warehouse_owner" && role != "admin")
+                {
+                    return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Chỉ chủ kho hoặc admin mới được preview layout duyệt inbound",
+                        "FORBIDDEN",
+                        null,
+                        403
+                    );
+                }
+
+                // Chiều cao thực tế của khối hàng trên pallet (không chỉ chiều cao 1 đơn vị),
+                // dùng cho kiểm tra khoảng cách giữa các tầng kệ khi duyệt.
+                var stackGoodsHeights = new Dictionary<int, decimal>();
+
+                var receipt = _context.InboundReceipts
+                    .Include(r => r.Warehouse)
+                    .Include(r => r.InboundItems)
+                        .ThenInclude(ii => ii.Item)
+                            .ThenInclude(i => i.Product)
+                    .Include(r => r.InboundItems)
+                        .ThenInclude(ii => ii.Pallet)
+                    .FirstOrDefault(r => r.ReceiptId == receiptId);
+
+                if (receipt == null)
+                {
+                    return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Không tìm thấy yêu cầu gửi hàng",
+                        "NOT_FOUND",
+                        null,
+                        404
+                    );
+                }
+
+                if (receipt.Status != "pending")
+                {
+                    return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Chỉ có thể preview layout cho các yêu cầu ở trạng thái pending",
+                        "INVALID_STATUS",
+                        null,
+                        400
+                    );
+                }
+
+                // Nếu ở chế độ bạn tự xếp (manual), dùng chính layout chi tiết đã lưu để tính chiều cao khối hàng
+                if (string.Equals(receipt.StackMode, "manual", StringComparison.OrdinalIgnoreCase))
+                {
+                    var inboundItemIds = receipt.InboundItems
+                        .Select(ii => ii.InboundItemId)
+                        .ToList();
+
+                    var unitsByItem = _context.InboundItemStackUnits
+                        .Where(u => inboundItemIds.Contains(u.InboundItemId))
+                        .GroupBy(u => u.InboundItemId)
+                        .ToDictionary(g => g.Key, g => g.ToList());
+
+                    foreach (var ii in receipt.InboundItems)
+                    {
+                        var expectedQty = ii.Quantity;
+
+                        if (!unitsByItem.TryGetValue(ii.InboundItemId, out var units) || units.Count != expectedQty)
+                        {
+                            return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                                "Layout xếp hàng thủ công chưa đầy đủ cho tất cả pallet. Vui lòng lưu layout trước khi preview/duyệt.",
+                                "MANUAL_LAYOUT_NOT_READY",
+                                null,
+                                400
+                            );
+                        }
+                    }
+
+                    foreach (var ii in receipt.InboundItems)
+                    {
+                        if (unitsByItem.TryGetValue(ii.InboundItemId, out var units) && units.Any())
+                        {
+                            var palletHeight = ii.Pallet.Height;
+                            var maxTop = units.Max(u => u.LocalY + u.Height / 2m);
+                            var goodsHeight = maxTop - palletHeight;
+
+                            if (goodsHeight <= 0m)
+                            {
+                                goodsHeight = ii.Item.Height;
+                            }
+
+                            stackGoodsHeights[ii.InboundItemId] = goodsHeight;
+                        }
+                        else
+                        {
+                            stackGoodsHeights[ii.InboundItemId] = ii.Item.Height;
+                        }
+                    }
+                }
+
+                // Nếu ở chế độ auto, mô phỏng cách xếp tự động để ước lượng chiều cao thực tế của khối hàng
+                if (string.Equals(receipt.StackMode, "auto", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Xác định pattern auto: straight / brick / cross (mặc định straight nếu null/invalid)
+                    var pattern = (receipt.AutoStackTemplate ?? "straight").Trim().ToLowerInvariant();
+                    if (pattern != "brick" && pattern != "cross" && pattern != "straight")
+                    {
+                        pattern = "straight";
+                    }
+
+                    foreach (var ii in receipt.InboundItems)
+                    {
+                        var product = ii.Item.Product;
+                        var pallet = ii.Pallet;
+
+                        var quantity = ii.Quantity;
+                        if (quantity <= 0)
+                        {
+                            quantity = 1;
+                        }
+
+                        var unitLower = product.Unit.ToLower();
+                        var categoryLower = product.Category?.ToLower();
+                        var isBag = unitLower.Contains("bao") || (categoryLower != null && categoryLower.Contains("bao"));
+
+                        var palletLength = pallet.Length;
+                        var palletWidth = pallet.Width;
+                        var palletHeight = pallet.Height;
+
+                        var unitLength = product.StandardLength.HasValue && product.StandardLength.Value > 0m
+                            ? product.StandardLength.Value
+                            : ii.Item.Length;
+                        var unitWidth = product.StandardWidth.HasValue && product.StandardWidth.Value > 0m
+                            ? product.StandardWidth.Value
+                            : ii.Item.Width;
+
+                        decimal unitHeight;
+                        if (isBag)
+                        {
+                            unitHeight = product.StandardHeight.HasValue && product.StandardHeight.Value > 0m
+                                ? product.StandardHeight.Value
+                                : ii.Item.Height / 2m;
+                        }
+                        else
+                        {
+                            unitHeight = product.StandardHeight.HasValue && product.StandardHeight.Value > 0m
+                                ? product.StandardHeight.Value
+                                : ii.Item.Height;
+                        }
+
+                        if (unitLength <= 0m)
+                        {
+                            unitLength = palletLength;
+                        }
+                        if (unitWidth <= 0m)
+                        {
+                            unitWidth = palletWidth;
+                        }
+                        if (unitHeight <= 0m)
+                        {
+                            unitHeight = ii.Item.Height > 0m ? ii.Item.Height : 0.1m;
+                        }
+
+                        var maxPerRow = Math.Max(1, (int)Math.Floor((double)(palletLength / unitLength)));
+                        var maxPerCol = Math.Max(1, (int)Math.Floor((double)(palletWidth / unitWidth)));
+                        var perLayer = Math.Max(1, maxPerRow * maxPerCol);
+
+                        var halfPalL = palletLength / 2m;
+                        var halfPalW = palletWidth / 2m;
+                        var halfL = unitLength / 2m;
+                        var halfW = unitWidth / 2m;
+
+                        decimal maxTopRelToPallet = 0m;
+
+                        for (var idx = 0; idx < quantity; idx++)
+                        {
+                            var layer = idx / perLayer;
+                            var posInLayer = idx % perLayer;
+                            var row = posInLayer / maxPerRow;
+                            var col = posInLayer % maxPerRow;
+
+                            var xStart = -palletLength / 2m + unitLength / 2m;
+                            var zStart = -palletWidth / 2m + unitWidth / 2m;
+
+                            decimal dx = 0m;
+                            decimal rotY = 0m;
+
+                            if (pattern == "brick")
+                            {
+                                dx = (layer % 2 == 1) ? unitLength / 2m : 0m;
+                            }
+                            else if (pattern == "cross")
+                            {
+                                if (((row + col) % 2) == 1)
+                                {
+                                    rotY = (decimal)(Math.PI / 2.0);
+                                }
+                            }
+
+                            var localX = xStart + col * unitLength + dx;
+                            var localZ = zStart + row * unitWidth;
+
+                            // Clamp vị trí trong phạm vi pallet (đặc biệt khi có dx cho pattern brick)
+                            if (localX > halfPalL - halfL) localX = halfPalL - halfL;
+                            if (localX < -halfPalL + halfL) localX = -halfPalL + halfL;
+                            if (localZ > halfPalW - halfW) localZ = halfPalW - halfW;
+                            if (localZ < -halfPalW + halfW) localZ = -halfPalW + halfW;
+
+                            var localY = palletHeight + unitHeight / 2m + layer * unitHeight;
+
+                            // Đỉnh khối hàng so với mặt pallet
+                            var topRelToPallet = localY + unitHeight / 2m - palletHeight;
+                            if (topRelToPallet > maxTopRelToPallet)
+                            {
+                                maxTopRelToPallet = topRelToPallet;
+                            }
+                        }
+
+                        if (maxTopRelToPallet <= 0m)
+                        {
+                            maxTopRelToPallet = ii.Item.Height;
+                        }
+
+                        stackGoodsHeights[ii.InboundItemId] = maxTopRelToPallet;
+                    }
+                }
+
+                // Gán tạm chiều cao khối hàng thực tế vào Item.Height để OptimizeInboundLayout
+                // dùng đúng giá trị này khi kiểm tra khoảng hở kệ.
+                if (stackGoodsHeights.Any())
+                {
+                    foreach (var ii in receipt.InboundItems)
+                    {
+                        if (stackGoodsHeights.TryGetValue(ii.InboundItemId, out var h) && h > 0m)
+                        {
+                            ii.Item.Height = h;
+                        }
+                    }
+                }
+
+                return OptimizeInboundLayout(receiptId, accountId, role, request);
+            }
+            catch (Exception ex)
+            {
+                return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                    $"Lỗi khi preview layout duyệt inbound: {ex.Message}",
                     "INTERNAL_ERROR",
                     null,
                     500
