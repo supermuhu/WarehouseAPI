@@ -9,6 +9,7 @@ using System.IO;
 using WarehouseAPI.Data;
 using WarehouseAPI.ModelView.Common;
 using WarehouseAPI.ModelView.Inbound;
+using WarehouseAPI.ViewModel.Warehouse;
 
 namespace WarehouseAPI.Services.Inbound
 {
@@ -335,6 +336,25 @@ namespace WarehouseAPI.Services.Inbound
                     }
 
                     _context.SaveChanges();
+
+                    // Nếu customer chọn Hệ thống tự gen (auto) thì sinh layout và lưu ngay
+                    if (string.Equals(stackMode, "auto", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var receiptWithNavs = _context.InboundReceipts
+                            .Include(r => r.InboundItems)
+                                .ThenInclude(ii => ii.Item)
+                                    .ThenInclude(i => i.Product)
+                            .Include(r => r.InboundItems)
+                                .ThenInclude(ii => ii.Pallet)
+                            .FirstOrDefault(r => r.ReceiptId == inboundReceipt.ReceiptId);
+
+                        if (receiptWithNavs != null)
+                        {
+                            GenerateAutoStackLayoutForReceipt(receiptWithNavs);
+                            _context.SaveChanges();
+                        }
+                    }
+
                     transaction.Commit();
 
                     return ApiResponse<object>.Ok(
@@ -376,6 +396,162 @@ namespace WarehouseAPI.Services.Inbound
                     null,
                     500
                 );
+            }
+        }
+
+        /// <summary>
+        /// Sinh layout auto (InboundItemStackUnits) cho toàn bộ inbound items của một phiếu,
+        /// dựa trên AutoStackTemplate và kích thước sản phẩm/pallet.
+        /// Được dùng khi customer chọn "Hệ thống tự gen".
+        /// </summary>
+        private void GenerateAutoStackLayoutForReceipt(InboundReceipt receipt)
+        {
+            if (receipt == null) return;
+
+            if (!string.Equals(receipt.StackMode, "auto", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var inboundItems = receipt.InboundItems?.ToList();
+            if (inboundItems == null || !inboundItems.Any())
+            {
+                return;
+            }
+
+            var inboundItemIds = inboundItems.Select(ii => ii.InboundItemId).ToList();
+            if (inboundItemIds.Any())
+            {
+                var existingUnits = _context.InboundItemStackUnits
+                    .Where(u => inboundItemIds.Contains(u.InboundItemId))
+                    .ToList();
+
+                if (existingUnits.Any())
+                {
+                    _context.InboundItemStackUnits.RemoveRange(existingUnits);
+                }
+            }
+
+            // Xác định pattern auto: straight / brick / cross (mặc định straight nếu null/invalid)
+            var pattern = (receipt.AutoStackTemplate ?? "straight").Trim().ToLowerInvariant();
+            if (pattern != "brick" && pattern != "cross" && pattern != "straight")
+            {
+                pattern = "straight";
+            }
+
+            foreach (var ii in inboundItems)
+            {
+                var product = ii.Item.Product;
+                var pallet = ii.Pallet;
+
+                var quantity = ii.Quantity;
+                if (quantity <= 0)
+                {
+                    quantity = 1;
+                }
+
+                var unitLower = product.Unit.ToLower();
+                var categoryLower = product.Category?.ToLower();
+                var isBag = unitLower.Contains("bao") || (categoryLower != null && categoryLower.Contains("bao"));
+
+                var palletLength = pallet.Length;
+                var palletWidth = pallet.Width;
+                var palletHeight = pallet.Height;
+
+                var unitLength = product.StandardLength.HasValue && product.StandardLength.Value > 0m
+                    ? product.StandardLength.Value
+                    : ii.Item.Length;
+                var unitWidth = product.StandardWidth.HasValue && product.StandardWidth.Value > 0m
+                    ? product.StandardWidth.Value
+                    : ii.Item.Width;
+
+                decimal unitHeight;
+                if (isBag)
+                {
+                    unitHeight = product.StandardHeight.HasValue && product.StandardHeight.Value > 0m
+                        ? product.StandardHeight.Value
+                        : ii.Item.Height / 2m;
+                }
+                else
+                {
+                    unitHeight = product.StandardHeight.HasValue && product.StandardHeight.Value > 0m
+                        ? product.StandardHeight.Value
+                        : ii.Item.Height;
+                }
+
+                if (unitLength <= 0m)
+                {
+                    unitLength = palletLength;
+                }
+                if (unitWidth <= 0m)
+                {
+                    unitWidth = palletWidth;
+                }
+                if (unitHeight <= 0m)
+                {
+                    unitHeight = ii.Item.Height > 0m ? ii.Item.Height : 0.1m;
+                }
+
+                var maxPerRow = Math.Max(1, (int)Math.Floor((double)(palletLength / unitLength)));
+                var maxPerCol = Math.Max(1, (int)Math.Floor((double)(palletWidth / unitWidth)));
+                var perLayer = Math.Max(1, maxPerRow * maxPerCol);
+
+                var halfPalL = palletLength / 2m;
+                var halfPalW = palletWidth / 2m;
+                var halfL = unitLength / 2m;
+                var halfW = unitWidth / 2m;
+
+                for (var idx = 0; idx < quantity; idx++)
+                {
+                    var layer = idx / perLayer;
+                    var posInLayer = idx % perLayer;
+                    var row = posInLayer / maxPerRow;
+                    var col = posInLayer % maxPerRow;
+
+                    var xStart = -palletLength / 2m + unitLength / 2m;
+                    var zStart = -palletWidth / 2m + unitWidth / 2m;
+
+                    decimal dx = 0m;
+                    decimal rotY = 0m;
+
+                    if (pattern == "brick")
+                    {
+                        dx = (layer % 2 == 1) ? unitLength / 2m : 0m;
+                    }
+                    else if (pattern == "cross")
+                    {
+                        if (((row + col) % 2) == 1)
+                        {
+                            rotY = (decimal)(Math.PI / 2.0);
+                        }
+                    }
+
+                    var localX = xStart + col * unitLength + dx;
+                    var localZ = zStart + row * unitWidth;
+
+                    // Clamp vị trí trong phạm vi pallet (đặc biệt khi có dx cho pattern brick)
+                    if (localX > halfPalL - halfL) localX = halfPalL - halfL;
+                    if (localX < -halfPalL + halfL) localX = -halfPalL + halfL;
+                    if (localZ > halfPalW - halfW) localZ = halfPalW - halfW;
+                    if (localZ < -halfPalW + halfW) localZ = -halfPalW + halfW;
+
+                    var localY = palletHeight + unitHeight / 2m + layer * unitHeight;
+
+                    var entity = new InboundItemStackUnit
+                    {
+                        InboundItemId = ii.InboundItemId,
+                        UnitIndex = idx,
+                        LocalX = localX,
+                        LocalY = localY,
+                        LocalZ = localZ,
+                        Length = unitLength,
+                        Width = unitWidth,
+                        Height = unitHeight,
+                        RotationY = rotY
+                    };
+
+                    _context.InboundItemStackUnits.Add(entity);
+                }
             }
         }
 
@@ -850,6 +1026,7 @@ namespace WarehouseAPI.Services.Inbound
                     .ToList();
 
                 var blockBoundsByInboundItem = new Dictionary<int, (decimal Length, decimal Width, decimal Height)>();
+                var stackUnitsByInboundItem = new Dictionary<int, List<ItemStackUnitViewModel>>();
 
                 if (inboundItemIdsForBounds.Any())
                 {
@@ -862,6 +1039,27 @@ namespace WarehouseAPI.Services.Inbound
                         var unitsByItem = allUnits
                             .GroupBy(u => u.InboundItemId)
                             .ToDictionary(g => g.Key, g => g.ToList());
+
+                        // Map sang StackUnits cho từng inbound item
+                        foreach (var kv in unitsByItem)
+                        {
+                            var vmUnits = kv.Value
+                                .OrderBy(u => u.UnitIndex)
+                                .Select(u => new ItemStackUnitViewModel
+                                {
+                                    UnitIndex = u.UnitIndex,
+                                    LocalX = u.LocalX,
+                                    LocalY = u.LocalY,
+                                    LocalZ = u.LocalZ,
+                                    Length = u.Length,
+                                    Width = u.Width,
+                                    Height = u.Height,
+                                    RotationY = u.RotationY
+                                })
+                                .ToList();
+
+                            stackUnitsByInboundItem[kv.Key] = vmUnits;
+                        }
 
                         foreach (var ii in receipt.InboundItems)
                         {
@@ -964,7 +1162,10 @@ namespace WarehouseAPI.Services.Inbound
                             PalletLength = pallet.Length,
                             PalletWidth = pallet.Width,
                             PalletHeight = pallet.Height,
-                            IsBag = isBag
+                            IsBag = isBag,
+                            StackUnits = stackUnitsByInboundItem.TryGetValue(ii.InboundItemId, out var s)
+                                ? s
+                                : null
                         };
                     }).ToList()
                 };
@@ -2174,25 +2375,61 @@ namespace WarehouseAPI.Services.Inbound
                     }
                 }
 
-                // Nếu ở chế độ auto, sinh layout mặc định cho từng inbound item và lưu vào InboundItemStackUnits
+                // Nếu ở chế độ auto, ưu tiên dùng layout chi tiết đã lưu để tính chiều cao khối hàng.
+                // Đối với các phiếu cũ chưa có layout, fallback sang mô phỏng auto (không lưu DB).
                 if (string.Equals(receipt.StackMode, "auto", StringComparison.OrdinalIgnoreCase))
                 {
                     var inboundItemIdsForAuto = receipt.InboundItems
                         .Select(ii => ii.InboundItemId)
                         .ToList();
 
+                    var unitsByItem = new Dictionary<int, List<InboundItemStackUnit>>();
+
                     if (inboundItemIdsForAuto.Any())
                     {
-                        var existingAutoUnits = _context.InboundItemStackUnits
+                        unitsByItem = _context.InboundItemStackUnits
                             .Where(u => inboundItemIdsForAuto.Contains(u.InboundItemId))
-                            .ToList();
+                            .GroupBy(u => u.InboundItemId)
+                            .ToDictionary(g => g.Key, g => g.ToList());
+                    }
 
-                        if (existingAutoUnits.Any())
+                    bool hasCompleteLayoutForAll = true;
+
+                    foreach (var ii in receipt.InboundItems)
+                    {
+                        if (!unitsByItem.TryGetValue(ii.InboundItemId, out var units) || units.Count != ii.Quantity)
                         {
-                            _context.InboundItemStackUnits.RemoveRange(existingAutoUnits);
+                            hasCompleteLayoutForAll = false;
+                            break;
                         }
+                    }
 
-                        // Xác định pattern auto: straight / brick / cross (mặc định straight nếu null/invalid)
+                    if (hasCompleteLayoutForAll && unitsByItem.Any())
+                    {
+                        foreach (var ii in receipt.InboundItems)
+                        {
+                            if (unitsByItem.TryGetValue(ii.InboundItemId, out var units) && units.Any())
+                            {
+                                var palletHeight = ii.Pallet.Height;
+                                var maxTop = units.Max(u => u.LocalY + u.Height / 2m);
+                                var goodsHeight = maxTop - palletHeight;
+
+                                if (goodsHeight <= 0m)
+                                {
+                                    goodsHeight = ii.Item.Height;
+                                }
+
+                                stackGoodsHeights[ii.InboundItemId] = goodsHeight;
+                            }
+                            else
+                            {
+                                stackGoodsHeights[ii.InboundItemId] = ii.Item.Height;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Fallback: mô phỏng cách xếp tự động để ước lượng chiều cao thực tế (không ghi DB)
                         var pattern = (receipt.AutoStackTemplate ?? "straight").Trim().ToLowerInvariant();
                         if (pattern != "brick" && pattern != "cross" && pattern != "straight")
                         {
@@ -2305,21 +2542,6 @@ namespace WarehouseAPI.Services.Inbound
                                 {
                                     maxTopRelToPallet = topRelToPallet;
                                 }
-
-                                var entity = new InboundItemStackUnit
-                                {
-                                    InboundItemId = ii.InboundItemId,
-                                    UnitIndex = idx,
-                                    LocalX = localX,
-                                    LocalY = localY,
-                                    LocalZ = localZ,
-                                    Length = unitLength,
-                                    Width = unitWidth,
-                                    Height = unitHeight,
-                                    RotationY = rotY
-                                };
-
-                                _context.InboundItemStackUnits.Add(entity);
                             }
 
                             if (maxTopRelToPallet <= 0m)
@@ -2604,46 +2826,97 @@ namespace WarehouseAPI.Services.Inbound
                     // Thử xếp theo preferred layout nếu có
                     if (forceUsePreferred && preferredLayoutMap.TryGetValue(pallet.PalletId, out var prefLayout))
                     {
-                        if (itemIsBox && prefLayout.ZoneId.HasValue && prefLayout.ShelfId.HasValue 
-                            && prefLayout.PositionX.HasValue && prefLayout.PositionZ.HasValue)
+                        if (prefLayout.ZoneId.HasValue && prefLayout.PositionX.HasValue && prefLayout.PositionZ.HasValue)
                         {
                             var zone = candidateZones.FirstOrDefault(z => z.ZoneId == prefLayout.ZoneId.Value);
-                            if (zone != null && racksByZone.TryGetValue(zone.ZoneId, out var zoneRacks) && zoneRacks.Any())
+                            if (zone != null)
                             {
-                                var rack = zoneRacks.FirstOrDefault(r => r.Shelves.Any(s => s.ShelfId == prefLayout.ShelfId.Value));
-                                var shelf = rack?.Shelves.FirstOrDefault(s => s.ShelfId == prefLayout.ShelfId.Value);
+                                var x = prefLayout.PositionX.Value;
+                                var z = prefLayout.PositionZ.Value;
 
-                                if (rack != null && shelf != null)
+                                // Trường hợp pallet box trên kệ: có ShelfId cụ thể
+                                if (itemIsBox && prefLayout.ShelfId.HasValue
+                                    && racksByZone.TryGetValue(zone.ZoneId, out var zoneRacks) && zoneRacks.Any())
                                 {
-                                    var palletHeight = pallet.Height;
+                                    var rack = zoneRacks.FirstOrDefault(r => r.Shelves.Any(s => s.ShelfId == prefLayout.ShelfId.Value));
+                                    var shelf = rack?.Shelves.FirstOrDefault(s => s.ShelfId == prefLayout.ShelfId.Value);
 
-                                    if (!stackGoodsHeights.TryGetValue(ii.InboundItemId, out var itemStackHeight))
+                                    if (rack != null && shelf != null)
                                     {
-                                        itemStackHeight = ii.Item.Height;
+                                        var palletHeight = pallet.Height;
+
+                                        if (!stackGoodsHeights.TryGetValue(ii.InboundItemId, out var itemStackHeight))
+                                        {
+                                            itemStackHeight = ii.Item.Height;
+                                        }
+
+                                        var clearHeight = GetShelfClearHeight(rack, shelf);
+
+                                        if (palletHeight + itemStackHeight <= clearHeight)
+                                        {
+                                            var shelfX = rack.PositionX;
+                                            var shelfZ = rack.PositionZ;
+                                            var shelfLength = Math.Min(rack.Length, shelf.Length);
+                                            var shelfWidth = Math.Min(rack.Width, shelf.Width);
+
+                                            if (x >= shelfX && x + pallet.Length <= shelfX + shelfLength &&
+                                                z >= shelfZ && z + pallet.Width <= shelfZ + shelfWidth)
+                                            {
+                                                var shelfExisting = existingLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+                                                var shelfNew = newLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+                                                bool collision = false;
+
+                                                foreach (var loc in shelfExisting.Concat(shelfNew))
+                                                {
+                                                    var otherPallet = loc.Pallet;
+                                                    if (IsOverlap(x, z, pallet.Length, pallet.Width,
+                                                            loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                                    {
+                                                        collision = true;
+                                                        break;
+                                                    }
+                                                }
+
+                                                if (!collision)
+                                                {
+                                                    var location = new PalletLocation
+                                                    {
+                                                        PalletId = pallet.PalletId,
+                                                        ZoneId = zone.ZoneId,
+                                                        ShelfId = shelf.ShelfId,
+                                                        PositionX = x,
+                                                        PositionY = shelf.PositionY,
+                                                        PositionZ = z,
+                                                        StackLevel = 1,
+                                                        StackedOnPallet = null,
+                                                        IsGround = false,
+                                                        AssignedAt = DateTime.Now
+                                                    };
+
+                                                    newLocations.Add(location);
+                                                    _context.PalletLocations.Add(location);
+                                                    placed = true;
+                                                }
+                                            }
+                                        }
                                     }
+                                }
 
-                                    var clearHeight = GetShelfClearHeight(rack, shelf);
+                                // Nếu không phải box trên kệ, hoặc không xếp được trên kệ thì thử đặt xuống đất trong zone
+                                // Chỉ áp dụng cho hàng không phải thùng (itemIsBox == false)
+                                if (!placed && !itemIsBox)
+                                {
+                                    var maxX = zone.PositionX + zone.Length;
+                                    var maxZ = zone.PositionZ + zone.Width;
 
-                                    if (palletHeight + itemStackHeight > clearHeight)
+                                    if (x >= zone.PositionX && x + pallet.Length <= maxX &&
+                                        z >= zone.PositionZ && z + pallet.Width <= maxZ)
                                     {
-                                        continue;
-                                    }
-
-                                    var shelfX = rack.PositionX;
-                                    var shelfZ = rack.PositionZ;
-                                    var shelfLength = Math.Min(rack.Length, shelf.Length);
-                                    var shelfWidth = Math.Min(rack.Width, shelf.Width);
-                                    var x = prefLayout.PositionX.Value;
-                                    var z = prefLayout.PositionZ.Value;
-
-                                    if (x >= shelfX && x + pallet.Length <= shelfX + shelfLength &&
-                                        z >= shelfZ && z + pallet.Width <= shelfZ + shelfWidth)
-                                    {
-                                        var shelfExisting = existingLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
-                                        var shelfNew = newLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+                                        var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
+                                        var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
                                         bool collision = false;
 
-                                        foreach (var loc in shelfExisting.Concat(shelfNew))
+                                        foreach (var loc in zoneExisting.Concat(zoneNew))
                                         {
                                             var otherPallet = loc.Pallet;
                                             if (IsOverlap(x, z, pallet.Length, pallet.Width,
@@ -2660,13 +2933,13 @@ namespace WarehouseAPI.Services.Inbound
                                             {
                                                 PalletId = pallet.PalletId,
                                                 ZoneId = zone.ZoneId,
-                                                ShelfId = shelf.ShelfId,
+                                                ShelfId = null,
                                                 PositionX = x,
-                                                PositionY = shelf.PositionY,
+                                                PositionY = zone.PositionY,
                                                 PositionZ = z,
                                                 StackLevel = 1,
                                                 StackedOnPallet = null,
-                                                IsGround = false,
+                                                IsGround = true,
                                                 AssignedAt = DateTime.Now
                                             };
 
@@ -2674,58 +2947,6 @@ namespace WarehouseAPI.Services.Inbound
                                             _context.PalletLocations.Add(location);
                                             placed = true;
                                         }
-                                    }
-                                }
-                            }
-                        }
-                        else if (!itemIsBox && prefLayout.ZoneId.HasValue 
-                            && prefLayout.PositionX.HasValue && prefLayout.PositionZ.HasValue)
-                        {
-                            var zone = candidateZones.FirstOrDefault(z => z.ZoneId == prefLayout.ZoneId.Value);
-                            if (zone != null)
-                            {
-                                var maxX = zone.PositionX + zone.Length;
-                                var maxZ = zone.PositionZ + zone.Width;
-                                var x = prefLayout.PositionX.Value;
-                                var z = prefLayout.PositionZ.Value;
-
-                                if (x >= zone.PositionX && x + pallet.Length <= maxX &&
-                                    z >= zone.PositionZ && z + pallet.Width <= maxZ)
-                                {
-                                    var zoneExisting = existingLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
-                                    var zoneNew = newLocations.Where(l => l.ZoneId == zone.ZoneId).ToList();
-                                    bool collision = false;
-
-                                    foreach (var loc in zoneExisting.Concat(zoneNew))
-                                    {
-                                        var otherPallet = loc.Pallet;
-                                        if (IsOverlap(x, z, pallet.Length, pallet.Width,
-                                                loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
-                                        {
-                                            collision = true;
-                                            break;
-                                        }
-                                    }
-
-                                    if (!collision)
-                                    {
-                                        var location = new PalletLocation
-                                        {
-                                            PalletId = pallet.PalletId,
-                                            ZoneId = zone.ZoneId,
-                                            ShelfId = null,
-                                            PositionX = x,
-                                            PositionY = zone.PositionY,
-                                            PositionZ = z,
-                                            StackLevel = 1,
-                                            StackedOnPallet = null,
-                                            IsGround = true,
-                                            AssignedAt = DateTime.Now
-                                        };
-
-                                        newLocations.Add(location);
-                                        _context.PalletLocations.Add(location);
-                                        placed = true;
                                     }
                                 }
                             }

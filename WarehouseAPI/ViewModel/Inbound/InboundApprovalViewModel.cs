@@ -51,4 +51,10 @@ public class InboundApprovalItemViewModel
 
     // Gợi ý loại hiển thị
     public bool IsBag { get; set; }
+
+    /// <summary>
+    /// Layout chi tiết các đơn vị hàng trên pallet (nếu có), lấy từ InboundItemStackUnits.
+    /// Dùng cho viewer 2D/3D để vẽ đúng cách xếp.
+    /// </summary>
+    public List<ItemStackUnitViewModel>? StackUnits { get; set; }
 }
