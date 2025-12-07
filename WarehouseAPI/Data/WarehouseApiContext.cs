@@ -523,6 +523,10 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.PositionZ)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("position_z");
+            entity.Property(e => e.RotationY)
+                .HasColumnType("decimal(10, 4)")
+                .HasDefaultValue(0m)
+                .HasColumnName("rotation_y");
             entity.Property(e => e.ShelfId).HasColumnName("shelf_id");
             entity.Property(e => e.StackLevel)
                 .HasDefaultValue(1)

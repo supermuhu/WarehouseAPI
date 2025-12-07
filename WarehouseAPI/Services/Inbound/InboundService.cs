@@ -492,14 +492,68 @@ namespace WarehouseAPI.Services.Inbound
                     unitHeight = ii.Item.Height > 0m ? ii.Item.Height : 0.1m;
                 }
 
-                var maxPerRow = Math.Max(1, (int)Math.Floor((double)(palletLength / unitLength)));
-                var maxPerCol = Math.Max(1, (int)Math.Floor((double)(palletWidth / unitWidth)));
-                var perLayer = Math.Max(1, maxPerRow * maxPerCol);
+                // Bước lưới & hướng đặt khối trên pallet.
+                //  - Với pattern "cross": vẫn dùng ô vuông theo kích thước lớn hơn giữa L/W để an toàn khi có xoay 90°.
+                //  - Với "straight" / "brick": thử cả hai hướng (L×W) và (W×L), chọn hướng cho số lượng mỗi tầng (perLayer) lớn hơn.
+                decimal layoutLength = unitLength;
+                decimal layoutWidth = unitWidth;
+                decimal stepX;
+                decimal stepZ;
+                int maxPerRow;
+                int maxPerCol;
+                int perLayer;
+
+                if (pattern == "cross")
+                {
+                    var step = Math.Max(unitLength, unitWidth);
+                    stepX = step;
+                    stepZ = step;
+
+                    maxPerRow = Math.Max(1, (int)Math.Floor((double)(palletLength / stepX)));
+                    maxPerCol = Math.Max(1, (int)Math.Floor((double)(palletWidth / stepZ)));
+                    perLayer = Math.Max(1, maxPerRow * maxPerCol);
+                }
+                else
+                {
+                    // Hướng 0°: length song song palletLength, width song song palletWidth
+                    var stepX0 = unitLength;
+                    var stepZ0 = unitWidth;
+                    var maxPerRow0 = Math.Max(1, (int)Math.Floor((double)(palletLength / stepX0)));
+                    var maxPerCol0 = Math.Max(1, (int)Math.Floor((double)(palletWidth / stepZ0)));
+                    var perLayer0 = Math.Max(1, maxPerRow0 * maxPerCol0);
+
+                    // Hướng 90°: hoán đổi L/W trên pallet (vẫn xếp dạng lưới, không xoay chéo)
+                    var stepX1 = unitWidth;
+                    var stepZ1 = unitLength;
+                    var maxPerRow1 = Math.Max(1, (int)Math.Floor((double)(palletLength / stepX1)));
+                    var maxPerCol1 = Math.Max(1, (int)Math.Floor((double)(palletWidth / stepZ1)));
+                    var perLayer1 = Math.Max(1, maxPerRow1 * maxPerCol1);
+
+                    if (perLayer1 > perLayer0)
+                    {
+                        layoutLength = unitWidth;
+                        layoutWidth = unitLength;
+
+                        stepX = stepX1;
+                        stepZ = stepZ1;
+                        maxPerRow = maxPerRow1;
+                        maxPerCol = maxPerCol1;
+                        perLayer = perLayer1;
+                    }
+                    else
+                    {
+                        stepX = stepX0;
+                        stepZ = stepZ0;
+                        maxPerRow = maxPerRow0;
+                        maxPerCol = maxPerCol0;
+                        perLayer = perLayer0;
+                    }
+                }
 
                 var halfPalL = palletLength / 2m;
                 var halfPalW = palletWidth / 2m;
-                var halfL = unitLength / 2m;
-                var halfW = unitWidth / 2m;
+                var halfL = layoutLength / 2m;
+                var halfW = layoutWidth / 2m;
 
                 for (var idx = 0; idx < quantity; idx++)
                 {
@@ -508,15 +562,15 @@ namespace WarehouseAPI.Services.Inbound
                     var row = posInLayer / maxPerRow;
                     var col = posInLayer % maxPerRow;
 
-                    var xStart = -palletLength / 2m + unitLength / 2m;
-                    var zStart = -palletWidth / 2m + unitWidth / 2m;
+                    var xStart = -palletLength / 2m + stepX / 2m;
+                    var zStart = -palletWidth / 2m + stepZ / 2m;
 
                     decimal dx = 0m;
                     decimal rotY = 0m;
 
                     if (pattern == "brick")
                     {
-                        dx = (layer % 2 == 1) ? unitLength / 2m : 0m;
+                        dx = (layer % 2 == 1) ? layoutLength / 2m : 0m;
                     }
                     else if (pattern == "cross")
                     {
@@ -526,8 +580,8 @@ namespace WarehouseAPI.Services.Inbound
                         }
                     }
 
-                    var localX = xStart + col * unitLength + dx;
-                    var localZ = zStart + row * unitWidth;
+                    var localX = xStart + col * stepX + dx;
+                    var localZ = zStart + row * stepZ;
 
                     // Clamp vị trí trong phạm vi pallet (đặc biệt khi có dx cho pattern brick)
                     if (localX > halfPalL - halfL) localX = halfPalL - halfL;
@@ -544,8 +598,8 @@ namespace WarehouseAPI.Services.Inbound
                         LocalX = localX,
                         LocalY = localY,
                         LocalZ = localZ,
-                        Length = unitLength,
-                        Width = unitWidth,
+                        Length = layoutLength,
+                        Width = layoutWidth,
                         Height = unitHeight,
                         RotationY = rotY
                     };
@@ -1536,7 +1590,7 @@ namespace WarehouseAPI.Services.Inbound
 
                     bool placed = false;
 
-                    // Nếu FE gửi layout chi tiết (zone/shelf/XZ) và bật forceUsePreferred,
+                    // Nếu FE gửi layout chi tiết (zone/shelf/XZ/RotationY) và bật forceUsePreferred,
                     // thử xếp đúng toạ độ này trước khi chạy thuật toán quét chuẩn.
                     if (forceUsePreferred && preferredLayoutMap.TryGetValue(pallet.PalletId, out var prefLayout))
                     {
@@ -1687,6 +1741,7 @@ namespace WarehouseAPI.Services.Inbound
                                             PositionX = x,
                                             PositionY = zone.PositionY,
                                             PositionZ = z,
+                                            RotationY = 0m,
                                             StackLevel = 1,
                                             StackedOnPallet = null,
                                             IsGround = true,
@@ -1942,6 +1997,7 @@ namespace WarehouseAPI.Services.Inbound
                                         PositionX = baseLoc.PositionX,
                                         PositionY = baseLoc.PositionY + baseHeight,
                                         PositionZ = baseLoc.PositionZ,
+                                        RotationY = 0m,
                                         StackLevel = 2,
                                         StackedOnPallet = basePallet.PalletId,
                                         IsGround = false,
@@ -2199,7 +2255,7 @@ namespace WarehouseAPI.Services.Inbound
 
                             if (pattern == "brick")
                             {
-                                dx = (layer % 2 == 1) ? unitLength / 2m : 0m;
+                                dx = (layer % 2 == 1) ? Math.Max(unitLength, unitWidth) / 2m : 0m;
                             }
                             else if (pattern == "cross")
                             {
@@ -2887,6 +2943,7 @@ namespace WarehouseAPI.Services.Inbound
                                                         PositionX = x,
                                                         PositionY = shelf.PositionY,
                                                         PositionZ = z,
+                                                        RotationY = prefLayout.RotationY ?? 0m,
                                                         StackLevel = 1,
                                                         StackedOnPallet = null,
                                                         IsGround = false,
@@ -2937,6 +2994,7 @@ namespace WarehouseAPI.Services.Inbound
                                                 PositionX = x,
                                                 PositionY = zone.PositionY,
                                                 PositionZ = z,
+                                                RotationY = prefLayout.RotationY ?? 0m,
                                                 StackLevel = 1,
                                                 StackedOnPallet = null,
                                                 IsGround = true,
@@ -3023,6 +3081,7 @@ namespace WarehouseAPI.Services.Inbound
                                                     PositionX = x,
                                                     PositionY = shelf.PositionY,
                                                     PositionZ = z,
+                                                    RotationY = 0m,
                                                     StackLevel = 1,
                                                     StackedOnPallet = null,
                                                     IsGround = false,

@@ -285,6 +285,7 @@ CREATE TABLE pallet_locations (
     position_x DECIMAL(10,2) NOT NULL,
     position_y DECIMAL(10,2) NOT NULL,
     position_z DECIMAL(10,2) NOT NULL,
+    rotation_y DECIMAL(10,4) NOT NULL DEFAULT 0,
     stack_level INT NOT NULL DEFAULT 1,
     stacked_on_pallet INT NULL,
     is_ground BIT NOT NULL DEFAULT 0,

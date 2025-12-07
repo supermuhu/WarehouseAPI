@@ -25,6 +25,8 @@ public partial class PalletLocation
 
     public bool IsGround { get; set; }
 
+    public decimal RotationY { get; set; }
+
     public DateTime? AssignedAt { get; set; }
 
     public string? LocationCode { get; set; }

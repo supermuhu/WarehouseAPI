@@ -109,6 +109,7 @@ namespace WarehouseAPI.Services.Warehouse
                         IsGround = pl.IsGround,
                         StackLevel = pl.StackLevel,
                         StackedOnPallet = pl.StackedOnPallet,
+                        RotationY = pl.RotationY,
                         PalletLength = pl.Pallet.Length,
                         PalletWidth = pl.Pallet.Width,
                         PalletHeight = pl.Pallet.Height,

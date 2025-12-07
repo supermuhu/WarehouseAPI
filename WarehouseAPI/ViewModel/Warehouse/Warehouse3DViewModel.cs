@@ -120,6 +120,8 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public decimal PalletWidth { get; set; }
         public decimal PalletHeight { get; set; }
 
+        public decimal RotationY { get; set; }
+
         public string? PalletType { get; set; }
         public decimal? MaxWeight { get; set; }
         public decimal? MaxStackHeight { get; set; }

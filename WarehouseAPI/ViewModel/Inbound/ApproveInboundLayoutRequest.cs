@@ -29,6 +29,11 @@ public class PreferredPalletLayoutDto
     /// Toạ độ Z mong muốn (theo mét, hệ trục toàn cục trong kho). Nếu null, BE tự quét grid.
     /// </summary>
     public decimal? PositionZ { get; set; }
+
+    /// <summary>
+    /// Góc xoay pallet quanh trục Y (radians). Nếu null, BE hiểu là 0 (không xoay).
+    /// </summary>
+    public decimal? RotationY { get; set; }
 }
 
 public class ApproveInboundLayoutRequest
