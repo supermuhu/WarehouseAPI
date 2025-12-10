@@ -423,6 +423,7 @@ CREATE TABLE inbound_items (
     item_id INT NOT NULL,
     pallet_id INT NOT NULL,
     quantity INT NOT NULL DEFAULT 1,
+    stack_mode VARCHAR(20) NOT NULL DEFAULT 'auto' CHECK (stack_mode IN ('auto', 'manual')),
     CONSTRAINT FK_inbound_items_receipt FOREIGN KEY (receipt_id) REFERENCES inbound_receipts(receipt_id),
     CONSTRAINT FK_inbound_items_item FOREIGN KEY (item_id) REFERENCES items(item_id),
     CONSTRAINT FK_inbound_items_pallet FOREIGN KEY (pallet_id) REFERENCES pallets(pallet_id)

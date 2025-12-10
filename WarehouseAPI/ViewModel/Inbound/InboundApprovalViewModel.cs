@@ -34,6 +34,8 @@ public class InboundApprovalItemViewModel
 
     public int Quantity { get; set; }
 
+    public string StackMode { get; set; } = "auto";
+
     // Kích thước 1 đơn vị sản phẩm (box/bag)
     public decimal? UnitLength { get; set; }
     public decimal? UnitWidth { get; set; }

@@ -51,6 +51,20 @@ namespace WarehouseAPI.Services.Inbound
                 .DefaultTextStyle(TextStyle.Default.FontSize(9));
         }
 
+        private string GenerateUniquePalletBarcode()
+        {
+            while (true)
+            {
+                var code = $"PLT-{DateTime.Now:yyyyMMddHHmmss}-{Guid.NewGuid():N}";
+
+                var exists = _context.Pallets.Any(p => p.Barcode == code);
+                if (!exists)
+                {
+                    return code;
+                }
+            }
+        }
+
         private static decimal GetShelfClearHeight(Rack rack, Shelf shelf)
         {
             var orderedShelves = rack.Shelves
@@ -145,12 +159,41 @@ namespace WarehouseAPI.Services.Inbound
                 }
 
                 // Validate các items
-                var palletIds = request.Items.Select(i => i.PalletId).Distinct().ToList();
                 var productIds = request.Items.Select(i => i.ProductId).Distinct().ToList();
 
-                // Mỗi pallet chỉ được phép gắn một hàng hóa trong một yêu cầu
+                // Đảm bảo mỗi item có đủ thông tin pallet (PalletId hoặc template/custom)
+                foreach (var itemReq in request.Items)
+                {
+                    if (itemReq.PalletId.HasValue)
+                    {
+                        continue;
+                    }
+
+                    var hasTemplate = itemReq.PalletTemplateId.HasValue;
+                    var hasCustomSize = itemReq.PalletLength.HasValue && itemReq.PalletWidth.HasValue;
+
+                    if (!hasTemplate && !hasCustomSize)
+                    {
+                        return ApiResponse<object>.Fail(
+                            "Mỗi hàng hóa cần chọn pallet có sẵn, chọn template hoặc nhập kích thước pallet.",
+                            "MISSING_PALLET_INFO",
+                            null,
+                            400
+                        );
+                    }
+                }
+
+                // Các pallet có sẵn được chỉ định bằng PalletId
+                var existingPalletIds = request.Items
+                    .Where(i => i.PalletId.HasValue)
+                    .Select(i => i.PalletId!.Value)
+                    .Distinct()
+                    .ToList();
+
+                // Mỗi pallet có sẵn chỉ được phép gắn một hàng hóa trong một yêu cầu
                 var duplicatePallets = request.Items
-                    .GroupBy(i => i.PalletId)
+                    .Where(i => i.PalletId.HasValue)
+                    .GroupBy(i => i.PalletId!.Value)
                     .Where(g => g.Count() > 1)
                     .Select(g => g.Key)
                     .ToList();
@@ -165,19 +208,23 @@ namespace WarehouseAPI.Services.Inbound
                     );
                 }
 
-                // Kiểm tra pallets có tồn tại và available không
-                var pallets = _context.Pallets
-                    .Where(p => palletIds.Contains(p.PalletId))
-                    .ToList();
-
-                if (pallets.Count != palletIds.Count)
+                // Kiểm tra pallets có sẵn có tồn tại không
+                var existingPallets = new List<WarehouseAPI.Data.Pallet>();
+                if (existingPalletIds.Any())
                 {
-                    return ApiResponse<object>.Fail(
-                        "Một hoặc nhiều pallet không tồn tại",
-                        "PALLET_NOT_FOUND",
-                        null,
-                        404
-                    );
+                    existingPallets = _context.Pallets
+                        .Where(p => existingPalletIds.Contains(p.PalletId))
+                        .ToList();
+
+                    if (existingPallets.Count != existingPalletIds.Count)
+                    {
+                        return ApiResponse<object>.Fail(
+                            "Một hoặc nhiều pallet không tồn tại",
+                            "PALLET_NOT_FOUND",
+                            null,
+                            404
+                        );
+                    }
                 }
 
                 // Kiểm tra products có tồn tại và active không
@@ -219,15 +266,82 @@ namespace WarehouseAPI.Services.Inbound
                 using var transaction = _context.Database.BeginTransaction();
                 try
                 {
+                    // Tạo pallet mới cho các item chưa có PalletId
+                    var itemsNeedingNewPallet = request.Items
+                        .Where(i => !i.PalletId.HasValue)
+                        .ToList();
+
+                    if (itemsNeedingNewPallet.Any())
+                    {
+                        var templateIds = itemsNeedingNewPallet
+                            .Where(i => i.PalletTemplateId.HasValue)
+                            .Select(i => i.PalletTemplateId!.Value)
+                            .Distinct()
+                            .ToList();
+
+                        var templates = new List<PalletTemplate>();
+                        if (templateIds.Any())
+                        {
+                            templates = _context.PalletTemplates
+                                .Where(t => templateIds.Contains(t.TemplateId) && (t.IsActive == true))
+                                .ToList();
+
+                            if (templates.Count != templateIds.Count)
+                            {
+                                return ApiResponse<object>.Fail(
+                                    "Một hoặc nhiều template pallet không tồn tại hoặc không hoạt động",
+                                    "PALLET_TEMPLATE_NOT_FOUND",
+                                    null,
+                                    404
+                                );
+                            }
+                        }
+
+                        foreach (var itemReq in itemsNeedingNewPallet)
+                        {
+                            var template = itemReq.PalletTemplateId.HasValue
+                                ? templates.First(t => t.TemplateId == itemReq.PalletTemplateId.Value)
+                                : null;
+
+                            var length = itemReq.PalletLength ?? template?.Length ?? 1.20m;
+                            var width = itemReq.PalletWidth ?? template?.Width ?? 1.00m;
+                            var height = itemReq.PalletHeight ?? template?.Height ?? 0.15m;
+                            var maxWeight = itemReq.PalletMaxWeight ?? template?.MaxWeight ?? 1000m;
+                            var maxStackHeight = itemReq.PalletMaxStackHeight ?? template?.MaxStackHeight ?? 1.5m;
+                            var palletType = itemReq.PalletType ?? template?.PalletType;
+
+                            var pallet = new WarehouseAPI.Data.Pallet
+                            {
+                                Barcode = GenerateUniquePalletBarcode(),
+                                Length = length,
+                                Width = width,
+                                Height = height,
+                                MaxWeight = maxWeight,
+                                MaxStackHeight = maxStackHeight,
+                                PalletType = palletType,
+                                Status = "available",
+                                CreatedAt = DateTime.Now
+                            };
+
+                            _context.Pallets.Add(pallet);
+                            _context.SaveChanges();
+
+                            itemReq.PalletId = pallet.PalletId;
+                        }
+                    }
+
                     // Tạo receipt number
                     var tempId = Guid.NewGuid().ToString().Replace("-", "");
                     var receiptNumber = $"IN-{DateTime.Now:yyyyMMdd}-{tempId.Substring(0, 8)}";
 
                     // Tính tổng số items và pallets
                     var totalItems = request.Items.Sum(i => i.Quantity);
-                    var totalPallets = palletIds.Count;
+                    var totalPallets = request.Items
+                        .Select(i => i.PalletId!.Value)
+                        .Distinct()
+                        .Count();
 
-                    // Xác định mode xếp (auto/manual)
+                    // Xác định mode xếp mặc định cho cả phiếu (auto/manual)
                     var stackMode = (request.StackMode ?? "auto").ToLower();
                     if (stackMode != "auto" && stackMode != "manual")
                     {
@@ -266,10 +380,11 @@ namespace WarehouseAPI.Services.Inbound
 
                     // Tạo items và inbound_items
                     var itemCounter = 1;
+                    var autoPatternByItemId = new Dictionary<int, string?>();
+                    var hasAnyAutoItem = false;
                     foreach (var itemRequest in request.Items)
                     {
                         var product = products.First(p => p.ProductId == itemRequest.ProductId);
-                        var pallet = pallets.First(p => p.PalletId == itemRequest.PalletId);
 
                         // Kích thước khối hàng trên pallet (stack dimensions)
                         var length = itemRequest.Length ?? product.StandardLength ?? 0.5m;
@@ -287,8 +402,8 @@ namespace WarehouseAPI.Services.Inbound
                         }
 
                         // Xác định loại hàng: bao / thùng dựa trên đơn vị
-                        var unitLower = product.Unit.ToLower();
-                        var categoryLower = product.Category?.ToLower();
+                        var unitLower = (product.Unit ?? string.Empty).ToLower();
+                        var categoryLower = (product.Category ?? string.Empty).ToLower();
                         var itemType = unitLower.Contains("bao") || (categoryLower != null && categoryLower.Contains("bao"))
                             ? "bag"
                             : "box";
@@ -323,22 +438,62 @@ namespace WarehouseAPI.Services.Inbound
                         _context.SaveChanges();
 
                         // Mỗi pallet có 1 inbound_item, Quantity = số đơn vị hàng trên pallet
+                        if (!itemRequest.PalletId.HasValue)
+                        {
+                            throw new InvalidOperationException("PalletId must be set before creating InboundItem");
+                        }
+
+                        // Xác định mode xếp cho từng pallet (auto/manual)
+                        var itemStackModeRaw = (itemRequest.StackMode ?? stackMode).ToLower();
+                        if (itemStackModeRaw != "auto" && itemStackModeRaw != "manual")
+                        {
+                            itemStackModeRaw = stackMode;
+                        }
+
                         var inboundItem = new InboundItem
                         {
                             ReceiptId = inboundReceipt.ReceiptId,
                             ItemId = item.ItemId,
-                            PalletId = itemRequest.PalletId,
-                            Quantity = itemRequest.Quantity
+                            PalletId = itemRequest.PalletId.Value,
+                            Quantity = itemRequest.Quantity,
+                            StackMode = itemStackModeRaw
                         };
 
                         _context.InboundItems.Add(inboundItem);
+
+                        // Ghi nhận auto layout template cho từng item nếu item đó ở chế độ auto
+                        if (string.Equals(itemStackModeRaw, "auto", StringComparison.OrdinalIgnoreCase))
+                        {
+                            hasAnyAutoItem = true;
+                            string? itemPattern = null;
+                            var itemTpl = itemRequest.AutoStackTemplate?.Trim().ToLower();
+                            if (itemTpl == "straight" || itemTpl == "brick" || itemTpl == "cross")
+                            {
+                                itemPattern = itemTpl;
+                            }
+
+                            if (string.IsNullOrWhiteSpace(itemPattern))
+                            {
+                                if (!string.IsNullOrWhiteSpace(autoStackTemplate))
+                                {
+                                    itemPattern = autoStackTemplate;
+                                }
+                                else
+                                {
+                                    itemPattern = "straight";
+                                }
+                            }
+
+                            autoPatternByItemId[item.ItemId] = itemPattern;
+                        }
+
                         itemCounter++;
                     }
 
                     _context.SaveChanges();
 
-                    // Nếu customer chọn Hệ thống tự gen (auto) thì sinh layout và lưu ngay
-                    if (string.Equals(stackMode, "auto", StringComparison.OrdinalIgnoreCase))
+                    // Nếu có ít nhất một pallet ở chế độ auto thì sinh layout auto cho các pallet đó
+                    if (hasAnyAutoItem)
                     {
                         var receiptWithNavs = _context.InboundReceipts
                             .Include(r => r.InboundItems)
@@ -350,7 +505,7 @@ namespace WarehouseAPI.Services.Inbound
 
                         if (receiptWithNavs != null)
                         {
-                            GenerateAutoStackLayoutForReceipt(receiptWithNavs);
+                            GenerateAutoStackLayoutForReceipt(receiptWithNavs, autoPatternByItemId);
                             _context.SaveChanges();
                         }
                     }
@@ -404,17 +559,21 @@ namespace WarehouseAPI.Services.Inbound
         /// dựa trên AutoStackTemplate và kích thước sản phẩm/pallet.
         /// Được dùng khi customer chọn "Hệ thống tự gen".
         /// </summary>
-        private void GenerateAutoStackLayoutForReceipt(InboundReceipt receipt)
+        private void GenerateAutoStackLayoutForReceipt(InboundReceipt receipt, Dictionary<int, string?>? itemAutoTemplates = null)
         {
             if (receipt == null) return;
 
-            if (!string.Equals(receipt.StackMode, "auto", StringComparison.OrdinalIgnoreCase))
+            var inboundItems = receipt.InboundItems?.ToList();
+            if (inboundItems == null || !inboundItems.Any())
             {
                 return;
             }
 
-            var inboundItems = receipt.InboundItems?.ToList();
-            if (inboundItems == null || !inboundItems.Any())
+            // Chỉ sinh layout cho các inbound item ở chế độ auto
+            inboundItems = inboundItems
+                .Where(ii => string.Equals(ii.StackMode, "auto", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (!inboundItems.Any())
             {
                 return;
             }
@@ -432,15 +591,23 @@ namespace WarehouseAPI.Services.Inbound
                 }
             }
 
-            // Xác định pattern auto: straight / brick / cross (mặc định straight nếu null/invalid)
-            var pattern = (receipt.AutoStackTemplate ?? "straight").Trim().ToLowerInvariant();
-            if (pattern != "brick" && pattern != "cross" && pattern != "straight")
-            {
-                pattern = "straight";
-            }
-
             foreach (var ii in inboundItems)
             {
+                string pattern;
+                if (itemAutoTemplates != null && itemAutoTemplates.TryGetValue(ii.ItemId, out var tplFromItem) && !string.IsNullOrWhiteSpace(tplFromItem))
+                {
+                    pattern = tplFromItem.Trim().ToLowerInvariant();
+                }
+                else
+                {
+                    pattern = (receipt.AutoStackTemplate ?? "straight").Trim().ToLowerInvariant();
+                }
+
+                if (pattern != "brick" && pattern != "cross" && pattern != "straight")
+                {
+                    pattern = "straight";
+                }
+
                 var product = ii.Item.Product;
                 var pallet = ii.Pallet;
 
@@ -450,8 +617,8 @@ namespace WarehouseAPI.Services.Inbound
                     quantity = 1;
                 }
 
-                var unitLower = product.Unit.ToLower();
-                var categoryLower = product.Category?.ToLower();
+                var unitLower = (product.Unit ?? string.Empty).ToLower();
+                var categoryLower = (product.Category ?? string.Empty).ToLower();
                 var isBag = unitLower.Contains("bao") || (categoryLower != null && categoryLower.Contains("bao"));
 
                 var palletLength = pallet.Length;
@@ -880,16 +1047,6 @@ namespace WarehouseAPI.Services.Inbound
                     );
                 }
 
-                if (!string.Equals(receipt.StackMode, "manual", StringComparison.OrdinalIgnoreCase))
-                {
-                    return ApiResponse<object>.Fail(
-                        "Chỉ được lưu layout thủ công cho các yêu cầu ở chế độ bạn tự xếp",
-                        "INVALID_STACK_MODE",
-                        null,
-                        400
-                    );
-                }
-
                 if (receipt.Status != "pending")
                 {
                     return ApiResponse<object>.Fail(
@@ -1178,8 +1335,8 @@ namespace WarehouseAPI.Services.Inbound
                         var pallet = ii.Pallet;
 
                         // Heuristic xác định hàng bao
-                        var unitLower = product.Unit.ToLower();
-                        var categoryLower = product.Category?.ToLower();
+                        var unitLower = (product.Unit ?? string.Empty).ToLower();
+                        var categoryLower = (product.Category ?? string.Empty).ToLower();
                         bool isBag = unitLower.Contains("bao") || (categoryLower != null && categoryLower.Contains("bao"));
 
                         // Kích thước khối ban đầu từ Item
@@ -1207,6 +1364,7 @@ namespace WarehouseAPI.Services.Inbound
                             Unit = product.Unit,
                             Category = product.Category,
                             Quantity = ii.Quantity,
+                            StackMode = ii.StackMode,
                             UnitLength = product.StandardLength,
                             UnitWidth = product.StandardWidth,
                             UnitHeight = product.StandardHeight,
@@ -1293,6 +1451,51 @@ namespace WarehouseAPI.Services.Inbound
                     );
                 }
 
+                // Đảm bảo dữ liệu inbound items và navigation đầy đủ để tránh NullReference
+                var inboundItemsRaw = receipt.InboundItems?.ToList() ?? new List<InboundItem>();
+                if (!inboundItemsRaw.Any())
+                {
+                    return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Yêu cầu gửi hàng không có pallet nào để tối ưu layout",
+                        "NO_INBOUND_ITEMS",
+                        null,
+                        400
+                    );
+                }
+
+                foreach (var ii in inboundItemsRaw)
+                {
+                    if (ii.Item == null)
+                    {
+                        return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                            $"Dữ liệu inbound item {ii.InboundItemId} không đầy đủ (thiếu thông tin hàng hóa).",
+                            "INBOUND_ITEM_MISSING_ITEM",
+                            null,
+                            400
+                        );
+                    }
+
+                    if (ii.Pallet == null)
+                    {
+                        return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                            $"Dữ liệu inbound item {ii.InboundItemId} không đầy đủ (thiếu pallet).",
+                            "INBOUND_ITEM_MISSING_PALLET",
+                            null,
+                            400
+                        );
+                    }
+
+                    if (ii.Item.Product == null)
+                    {
+                        return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                            $"Sản phẩm của inbound item {ii.InboundItemId} đã bị xoá hoặc không tồn tại.",
+                            "INBOUND_ITEM_MISSING_PRODUCT",
+                            null,
+                            400
+                        );
+                    }
+                }
+
                 // Lấy các khu vực thuộc về customer trong kho này
                 // Nếu phiếu đã gắn với một Zone cụ thể, chỉ lấy đúng zone đó
                 var zonesQuery = _context.WarehouseZones
@@ -1327,7 +1530,8 @@ namespace WarehouseAPI.Services.Inbound
                     .ToDictionary(g => g.Key, g => g.ToList());
 
                 // Nếu có hàng thùng (box) nhưng không có rack nào trong các khu vực của customer thì không cho duyệt
-                bool hasBoxItems = receipt.InboundItems.Any(ii => ii.Item.ItemType.ToLower() == "box");
+                bool hasBoxItems = receipt.InboundItems
+                    .Any(ii => (ii.Item.ItemType ?? string.Empty).ToLower() == "box");
 
                 bool hasAnyRack = racks.Any();
 
@@ -1349,6 +1553,15 @@ namespace WarehouseAPI.Services.Inbound
 
                 // Tính điểm ưu tiên zone dựa trên khoảng cách đến bàn checkin và cổng ra
                 var warehouseEntity = receipt.Warehouse;
+                if (warehouseEntity == null)
+                {
+                    return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Kho chứa phiếu inbound chưa được cấu hình đầy đủ",
+                        "WAREHOUSE_NOT_CONFIGURED",
+                        null,
+                        400
+                    );
+                }
                 var gates = _context.WarehouseGates
                     .Where(g => g.WarehouseId == receipt.WarehouseId)
                     .ToList();
@@ -1424,15 +1637,18 @@ namespace WarehouseAPI.Services.Inbound
                 }
 
                 // Parse allowed_item_types: nếu null thì set default theo warehouse_type
-                var warehouseType = receipt.Warehouse.WarehouseType.ToLower();
+                var rawWarehouseType = warehouseEntity.WarehouseType;
+                var warehouseType = string.IsNullOrWhiteSpace(rawWarehouseType)
+                    ? "medium"
+                    : rawWarehouseType.ToLower();
                 List<string> allowedItemTypes;
 
-                if (!string.IsNullOrWhiteSpace(receipt.Warehouse.AllowedItemTypes))
+                if (!string.IsNullOrWhiteSpace(warehouseEntity.AllowedItemTypes))
                 {
                     try
                     {
                         allowedItemTypes = JsonSerializer
-                            .Deserialize<List<string>>(receipt.Warehouse.AllowedItemTypes)!
+                            .Deserialize<List<string>>(warehouseEntity.AllowedItemTypes)!
                             .Select(t => t.ToLower())
                             .Distinct()
                             .ToList();
@@ -1655,30 +1871,6 @@ namespace WarehouseAPI.Services.Inbound
                                                         loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
                                                 {
                                                     collision = true;
-                                                    break;
-                                                }
-                                            }
-                                        }
-
-                                        if (!collision)
-                                        {
-                                            var location = new PalletLocation
-                                            {
-                                                PalletId = pallet.PalletId,
-                                                ZoneId = zone.ZoneId,
-                                                ShelfId = shelf.ShelfId,
-                                                PositionX = x,
-                                                PositionY = shelf.PositionY,
-                                                PositionZ = z,
-                                                StackLevel = 1,
-                                                StackedOnPallet = null,
-                                                IsGround = false,
-                                                AssignedAt = DateTime.Now
-                                            };
-
-                                            newLocations.Add(location);
-                                            placed = true;
-                                        }
                                     }
                                 }
                             }
@@ -1745,7 +1937,8 @@ namespace WarehouseAPI.Services.Inbound
                                             StackLevel = 1,
                                             StackedOnPallet = null,
                                             IsGround = true,
-                                            AssignedAt = DateTime.Now
+                                            AssignedAt = DateTime.Now,
+                                            Pallet = pallet
                                         };
 
                                         newLocations.Add(location);
@@ -2001,7 +2194,8 @@ namespace WarehouseAPI.Services.Inbound
                                         StackLevel = 2,
                                         StackedOnPallet = basePallet.PalletId,
                                         IsGround = false,
-                                        AssignedAt = DateTime.Now
+                                        AssignedAt = DateTime.Now,
+                                        Pallet = pallet
                                     };
 
                                     newLocations.Add(stackedLocation);
@@ -2117,26 +2311,77 @@ namespace WarehouseAPI.Services.Inbound
                     );
                 }
 
-                // Nếu ở chế độ bạn tự xếp (manual), dùng chính layout chi tiết đã lưu để tính chiều cao khối hàng
-                if (string.Equals(receipt.StackMode, "manual", StringComparison.OrdinalIgnoreCase))
+                // Đảm bảo dữ liệu inbound items và navigation đầy đủ để tránh NullReference
+                var inboundItemsRaw = receipt.InboundItems?.ToList() ?? new List<InboundItem>();
+                if (!inboundItemsRaw.Any())
                 {
-                    var inboundItemIds = receipt.InboundItems
+                    return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                        "Yêu cầu gửi hàng không có pallet nào để preview layout",
+                        "NO_INBOUND_ITEMS",
+                        null,
+                        400
+                    );
+                }
+
+                foreach (var ii in inboundItemsRaw)
+                {
+                    if (ii.Item == null)
+                    {
+                        return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                            $"Dữ liệu inbound item {ii.InboundItemId} không đầy đủ (thiếu thông tin hàng hóa).",
+                            "INBOUND_ITEM_MISSING_ITEM",
+                            null,
+                            400
+                        );
+                    }
+
+                    if (ii.Pallet == null)
+                    {
+                        return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                            $"Dữ liệu inbound item {ii.InboundItemId} không đầy đủ (thiếu pallet).",
+                            "INBOUND_ITEM_MISSING_PALLET",
+                            null,
+                            400
+                        );
+                    }
+
+                    if (ii.Item.Product == null)
+                    {
+                        return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
+                            $"Sản phẩm của inbound item {ii.InboundItemId} đã bị xoá hoặc không tồn tại.",
+                            "INBOUND_ITEM_MISSING_PRODUCT",
+                            null,
+                            400
+                        );
+                    }
+                }
+
+                var inboundItems = inboundItemsRaw;
+
+                // Các inbound item ở chế độ bạn tự xếp (manual)
+                var manualItems = inboundItems
+                    .Where(ii => string.Equals(ii.StackMode, "manual", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (manualItems.Any())
+                {
+                    var manualItemIds = manualItems
                         .Select(ii => ii.InboundItemId)
                         .ToList();
 
                     var unitsByItem = _context.InboundItemStackUnits
-                        .Where(u => inboundItemIds.Contains(u.InboundItemId))
+                        .Where(u => manualItemIds.Contains(u.InboundItemId))
                         .GroupBy(u => u.InboundItemId)
                         .ToDictionary(g => g.Key, g => g.ToList());
 
-                    foreach (var ii in receipt.InboundItems)
+                    foreach (var ii in manualItems)
                     {
                         var expectedQty = ii.Quantity;
 
                         if (!unitsByItem.TryGetValue(ii.InboundItemId, out var units) || units.Count != expectedQty)
                         {
                             return ApiResponse<InboundOptimizeLayoutViewModel>.Fail(
-                                "Layout xếp hàng thủ công chưa đầy đủ cho tất cả pallet. Vui lòng lưu layout trước khi preview/duyệt.",
+                                "Layout xếp hàng thủ công chưa đầy đủ cho tất cả pallet tự xếp. Vui lòng lưu layout trước khi preview/duyệt.",
                                 "MANUAL_LAYOUT_NOT_READY",
                                 null,
                                 400
@@ -2144,7 +2389,7 @@ namespace WarehouseAPI.Services.Inbound
                         }
                     }
 
-                    foreach (var ii in receipt.InboundItems)
+                    foreach (var ii in manualItems)
                     {
                         if (unitsByItem.TryGetValue(ii.InboundItemId, out var units) && units.Any())
                         {
@@ -2166,8 +2411,12 @@ namespace WarehouseAPI.Services.Inbound
                     }
                 }
 
-                // Nếu ở chế độ auto, mô phỏng cách xếp tự động để ước lượng chiều cao thực tế của khối hàng
-                if (string.Equals(receipt.StackMode, "auto", StringComparison.OrdinalIgnoreCase))
+                // Các inbound item ở chế độ auto: mô phỏng cách xếp tự động để ước lượng chiều cao khối hàng
+                var autoItems = inboundItems
+                    .Where(ii => string.Equals(ii.StackMode, "auto", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (autoItems.Any())
                 {
                     // Xác định pattern auto: straight / brick / cross (mặc định straight nếu null/invalid)
                     var pattern = (receipt.AutoStackTemplate ?? "straight").Trim().ToLowerInvariant();
@@ -2176,7 +2425,7 @@ namespace WarehouseAPI.Services.Inbound
                         pattern = "straight";
                     }
 
-                    foreach (var ii in receipt.InboundItems)
+                    foreach (var ii in autoItems)
                     {
                         var product = ii.Item.Product;
                         var pallet = ii.Pallet;
@@ -2187,8 +2436,8 @@ namespace WarehouseAPI.Services.Inbound
                             quantity = 1;
                         }
 
-                        var unitLower = product.Unit.ToLower();
-                        var categoryLower = product.Category?.ToLower();
+                        var unitLower = (product.Unit ?? string.Empty).ToLower();
+                        var categoryLower = (product.Category ?? string.Empty).ToLower();
                         var isBag = unitLower.Contains("bao") || (categoryLower != null && categoryLower.Contains("bao"));
 
                         var palletLength = pallet.Length;
@@ -2297,7 +2546,7 @@ namespace WarehouseAPI.Services.Inbound
                 // dùng đúng giá trị này khi kiểm tra khoảng hở kệ.
                 if (stackGoodsHeights.Any())
                 {
-                    foreach (var ii in receipt.InboundItems)
+                    foreach (var ii in inboundItems)
                     {
                         if (stackGoodsHeights.TryGetValue(ii.InboundItemId, out var h) && h > 0m)
                         {
@@ -2380,19 +2629,25 @@ namespace WarehouseAPI.Services.Inbound
                     );
                 }
 
-                // Nếu ở chế độ bạn tự xếp, yêu cầu phải có layout thủ công đầy đủ trước khi duyệt
-                if (string.Equals(receipt.StackMode, "manual", StringComparison.OrdinalIgnoreCase))
+                var inboundItems = receipt.InboundItems.ToList();
+
+                // Các inbound item ở chế độ bạn tự xếp (manual) phải có layout thủ công đầy đủ
+                var manualItems = inboundItems
+                    .Where(ii => string.Equals(ii.StackMode, "manual", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (manualItems.Any())
                 {
-                    var inboundItemIds = receipt.InboundItems
+                    var manualItemIds = manualItems
                         .Select(ii => ii.InboundItemId)
                         .ToList();
 
                     var unitsByItem = _context.InboundItemStackUnits
-                        .Where(u => inboundItemIds.Contains(u.InboundItemId))
+                        .Where(u => manualItemIds.Contains(u.InboundItemId))
                         .GroupBy(u => u.InboundItemId)
                         .ToDictionary(g => g.Key, g => g.ToList());
 
-                    foreach (var ii in receipt.InboundItems)
+                    foreach (var ii in manualItems)
                     {
                         var expectedQty = ii.Quantity;
 
@@ -2400,7 +2655,7 @@ namespace WarehouseAPI.Services.Inbound
                         {
                             transaction.Rollback();
                             return ApiResponse<object>.Fail(
-                                "Layout xếp hàng thủ công chưa đầy đủ cho tất cả pallet. Vui lòng lưu layout trước khi duyệt.",
+                                "Layout xếp hàng thủ công chưa đầy đủ cho tất cả pallet tự xếp. Vui lòng lưu layout trước khi duyệt.",
                                 "MANUAL_LAYOUT_NOT_READY",
                                 null,
                                 400
@@ -2409,7 +2664,7 @@ namespace WarehouseAPI.Services.Inbound
                     }
 
                     // Tính chiều cao thực tế của khối hàng trên pallet từ layout thủ công
-                    foreach (var ii in receipt.InboundItems)
+                    foreach (var ii in manualItems)
                     {
                         if (unitsByItem.TryGetValue(ii.InboundItemId, out var units) && units.Any())
                         {
@@ -2431,11 +2686,15 @@ namespace WarehouseAPI.Services.Inbound
                     }
                 }
 
-                // Nếu ở chế độ auto, ưu tiên dùng layout chi tiết đã lưu để tính chiều cao khối hàng.
-                // Đối với các phiếu cũ chưa có layout, fallback sang mô phỏng auto (không lưu DB).
-                if (string.Equals(receipt.StackMode, "auto", StringComparison.OrdinalIgnoreCase))
+                // Các inbound item ở chế độ auto: ưu tiên dùng layout chi tiết đã lưu nếu đầy đủ,
+                // nếu không thì fallback mô phỏng auto.
+                var autoItems = inboundItems
+                    .Where(ii => string.Equals(ii.StackMode, "auto", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (autoItems.Any())
                 {
-                    var inboundItemIdsForAuto = receipt.InboundItems
+                    var inboundItemIdsForAuto = autoItems
                         .Select(ii => ii.InboundItemId)
                         .ToList();
 
@@ -2451,7 +2710,7 @@ namespace WarehouseAPI.Services.Inbound
 
                     bool hasCompleteLayoutForAll = true;
 
-                    foreach (var ii in receipt.InboundItems)
+                    foreach (var ii in autoItems)
                     {
                         if (!unitsByItem.TryGetValue(ii.InboundItemId, out var units) || units.Count != ii.Quantity)
                         {
@@ -2462,7 +2721,7 @@ namespace WarehouseAPI.Services.Inbound
 
                     if (hasCompleteLayoutForAll && unitsByItem.Any())
                     {
-                        foreach (var ii in receipt.InboundItems)
+                        foreach (var ii in autoItems)
                         {
                             if (unitsByItem.TryGetValue(ii.InboundItemId, out var units) && units.Any())
                             {
@@ -2492,7 +2751,7 @@ namespace WarehouseAPI.Services.Inbound
                             pattern = "straight";
                         }
 
-                        foreach (var ii in receipt.InboundItems)
+                        foreach (var ii in autoItems)
                         {
                             var product = ii.Item.Product;
                             var pallet = ii.Pallet;
@@ -2503,8 +2762,8 @@ namespace WarehouseAPI.Services.Inbound
                                 quantity = 1;
                             }
 
-                            var unitLower = product.Unit.ToLower();
-                            var categoryLower = product.Category?.ToLower();
+                            var unitLower = (product.Unit ?? string.Empty).ToLower();
+                            var categoryLower = (product.Category ?? string.Empty).ToLower();
                             var isBag = unitLower.Contains("bao") || (categoryLower != null && categoryLower.Contains("bao"));
 
                             var palletLength = pallet.Length;
@@ -2796,7 +3055,7 @@ namespace WarehouseAPI.Services.Inbound
                         .ThenByDescending(ii => ii.Item.Weight ?? 0);
                 }
 
-                var inboundItems = orderedItems.ToList();
+                inboundItems = orderedItems.ToList();
 
                 // Tập pallet chứa hàng không được xếp chồng (ví dụ kính, thủy tinh)
                 var nonStackablePalletIds = inboundItems
@@ -3157,7 +3416,8 @@ namespace WarehouseAPI.Services.Inbound
                                             StackLevel = 1,
                                             StackedOnPallet = null,
                                             IsGround = true,
-                                            AssignedAt = DateTime.Now
+                                            AssignedAt = DateTime.Now,
+                                            Pallet = pallet
                                         };
 
                                         newLocations.Add(location);

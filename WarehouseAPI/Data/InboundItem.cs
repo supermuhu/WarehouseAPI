@@ -15,6 +15,8 @@ public partial class InboundItem
 
     public int Quantity { get; set; }
 
+    public string StackMode { get; set; } = "auto";
+
     public virtual ICollection<InboundItemStackUnit> InboundItemStackUnits { get; set; } = new List<InboundItemStackUnit>();
 
     public virtual Item Item { get; set; } = null!;

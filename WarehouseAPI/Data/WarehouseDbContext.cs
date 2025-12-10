@@ -126,6 +126,12 @@ public partial class WarehouseDbContext : DbContext
                 .IsUnicode(false)
                 .HasColumnName("receipt_id");
 
+            entity.Property(e => e.StackMode)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasDefaultValue("auto")
+                .HasColumnName("stack_mode");
+
             entity.HasOne(d => d.Item).WithMany(p => p.InboundItems)
                 .HasForeignKey(d => d.ItemId)
                 .OnDelete(DeleteBehavior.ClientSetNull)

@@ -29,8 +29,15 @@ public class CreateInboundRequestRequest
 
 public class InboundItemRequest
 {
-    [Required(ErrorMessage = "PalletId là bắt buộc")]
-    public int PalletId { get; set; }
+    public int? PalletId { get; set; }
+
+    public int? PalletTemplateId { get; set; }
+
+    public string? PalletType { get; set; }
+
+    public string StackMode { get; set; } = "auto";
+
+    public string? AutoStackTemplate { get; set; }
 
     [Required(ErrorMessage = "ProductId là bắt buộc")]
     public int ProductId { get; set; }
@@ -62,5 +69,14 @@ public class InboundItemRequest
     public decimal? Height { get; set; }
 
     public string? BatchNumber { get; set; }
-}
 
+    public decimal? PalletLength { get; set; }
+
+    public decimal? PalletWidth { get; set; }
+
+    public decimal? PalletHeight { get; set; }
+
+    public decimal? PalletMaxWeight { get; set; }
+
+    public decimal? PalletMaxStackHeight { get; set; }
+}
