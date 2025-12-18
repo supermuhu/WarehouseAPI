@@ -33,6 +33,8 @@ public partial class WarehouseApiContext : DbContext
 
     public virtual DbSet<OutboundReceipt> OutboundReceipts { get; set; }
 
+    public virtual DbSet<OutboundPalletPick> OutboundPalletPicks { get; set; }
+
     public virtual DbSet<Pallet> Pallets { get; set; }
 
     public virtual DbSet<PalletLocation> PalletLocations { get; set; }
@@ -426,6 +428,7 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.OutboundDate)
                 .HasDefaultValueSql("(getdate())")
                 .HasColumnName("outbound_date");
+            entity.Property(e => e.CompletedDate).HasColumnName("completed_date");
             entity.Property(e => e.ReceiptNumber)
                 .HasMaxLength(100)
                 .IsUnicode(false)
@@ -452,6 +455,40 @@ public partial class WarehouseApiContext : DbContext
                 .HasForeignKey(d => d.WarehouseId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_outbound_warehouse");
+        });
+
+        modelBuilder.Entity<OutboundPalletPick>(entity =>
+        {
+            entity.HasKey(e => e.PickId).HasName("PK__outbound_pallet_picks");
+
+            entity.ToTable("outbound_pallet_picks");
+
+            entity.HasIndex(e => new { e.ReceiptId, e.PalletId }, "UX_outbound_pallet_picks_receipt_pallet")
+                .IsUnique();
+
+            entity.Property(e => e.PickId).HasColumnName("pick_id");
+            entity.Property(e => e.ReceiptId).HasColumnName("receipt_id");
+            entity.Property(e => e.PalletId).HasColumnName("pallet_id");
+            entity.Property(e => e.PickedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("picked_at");
+            entity.Property(e => e.PickedBy).HasColumnName("picked_by");
+            entity.Property(e => e.Notes).HasColumnName("notes");
+
+            entity.HasOne(d => d.Receipt).WithMany(p => p.OutboundPalletPicks)
+                .HasForeignKey(d => d.ReceiptId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_outbound_pallet_picks_receipt");
+
+            entity.HasOne(d => d.Pallet).WithMany(p => p.OutboundPalletPicks)
+                .HasForeignKey(d => d.PalletId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_outbound_pallet_picks_pallet");
+
+            entity.HasOne(d => d.PickedByNavigation).WithMany(p => p.OutboundPalletPicks)
+                .HasForeignKey(d => d.PickedBy)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_outbound_pallet_picks_account");
         });
 
         modelBuilder.Entity<Pallet>(entity =>

@@ -138,68 +138,126 @@ namespace WarehouseAPI.Services.Warehouse
 
                 // Load items on pallets
                 var palletIds = pallets.Select(p => p.PalletId).ToList();
-                var items = db.ItemAllocations
+
+                var allocationEntities = db.ItemAllocations
                     .Include(ia => ia.Item)
                     .ThenInclude(i => i.Customer)
                     .Include(ia => ia.Item)
                     .ThenInclude(i => i.Product)
                     .Where(ia => palletIds.Contains(ia.PalletId))
-                    .Select(ia => new ItemAllocationViewModel
-                    {
-                        AllocationId = ia.AllocationId,
-                        ItemId = ia.ItemId,
-                        QrCode = ia.Item.QrCode,
-                        ItemName = ia.Item.ItemName,
-                        ItemType = ia.Item.ItemType,
-                        
-                        // Product information
-                        ProductId = ia.Item.ProductId,
-                        ProductCode = ia.Item.Product.ProductCode,
-                        ProductName = ia.Item.Product.ProductName,
-                        Unit = ia.Item.Product.Unit,
-                        Category = ia.Item.Product.Category,
-                        StandardLength = ia.Item.Product.StandardLength,
-                        StandardWidth = ia.Item.Product.StandardWidth,
-                        StandardHeight = ia.Item.Product.StandardHeight,
-                        StandardWeight = ia.Item.Product.StandardWeight,
-                        ProductDescription = ia.Item.Product.Description,
-                        StorageConditions = ia.Item.Product.StorageConditions,
-                        
-                        // Customer information
-                        CustomerId = ia.Item.CustomerId,
-                        CustomerName = ia.Item.Customer.FullName,
-                        
-                        // Pallet information
-                        PalletId = ia.PalletId,
-                        PositionX = ia.PositionX,
-                        PositionY = ia.PositionY,
-                        PositionZ = ia.PositionZ,
-                        
-                        // Item dimensions and properties
-                        Length = ia.Item.Length,
-                        Width = ia.Item.Width,
-                        Height = ia.Item.Height,
-                        Weight = ia.Item.Weight,
-                        Shape = ia.Item.Shape,
-                        PriorityLevel = ia.Item.PriorityLevel,
-                        IsHeavy = ia.Item.IsHeavy,
-                        IsFragile = ia.Item.IsFragile,
-                        
-                        // Batch and date information
-                        BatchNumber = ia.Item.BatchNumber,
-                        ManufacturingDate = ia.Item.ManufacturingDate,
-                        ExpiryDate = ia.Item.ExpiryDate,
-
-                        // Commercial information
-                        UnitPrice = ia.Item.UnitPrice,
-                        TotalAmount = ia.Item.TotalAmount,
-                        UnitQuantity = db.InboundItems
-                            .Where(ii => ii.ItemId == ia.ItemId && ii.PalletId == ia.PalletId)
-                            .OrderByDescending(ii => ii.InboundItemId)
-                            .Select(ii => (int?)ii.Quantity)
-                            .FirstOrDefault()
-                    })
                     .ToList();
+
+                var items = new List<ItemAllocationViewModel>();
+
+                if (allocationEntities.Any())
+                {
+                    var itemIds = allocationEntities.Select(ia => ia.ItemId).Distinct().ToList();
+                    var palletsForItems = allocationEntities.Select(ia => ia.PalletId).Distinct().ToList();
+
+                    // Inbound quantity per (ItemId, PalletId)
+                    var inboundItemsForAlloc = db.InboundItems
+                        .Where(ii => itemIds.Contains(ii.ItemId) && palletsForItems.Contains(ii.PalletId))
+                        .Select(ii => new { ii.ItemId, ii.PalletId, ii.Quantity, ii.InboundItemId })
+                        .ToList();
+
+                    var inboundQtyLookup = inboundItemsForAlloc
+                        .GroupBy(ii => new { ii.ItemId, ii.PalletId })
+                        .ToDictionary(
+                            g => (ItemId: g.Key.ItemId, PalletId: g.Key.PalletId),
+                            g => g
+                                .OrderByDescending(x => x.InboundItemId)
+                                .Select(x => x.Quantity)
+                                .FirstOrDefault()
+                        );
+
+                    // Picked quantity (OUTBOUND_PICK) per (ItemId, PalletId)
+                    var pickedHistories = db.ItemLocationHistories
+                        .Where(h => itemIds.Contains(h.ItemId)
+                                    && h.PalletId.HasValue
+                                    && palletsForItems.Contains(h.PalletId.Value)
+                                    && h.ActionType == "OUTBOUND_PICK")
+                        .Select(h => new { h.ItemId, h.PalletId })
+                        .ToList();
+
+                    var pickedQtyLookup = pickedHistories
+                        .GroupBy(h => new { h.ItemId, PalletId = h.PalletId!.Value })
+                        .ToDictionary(
+                            g => (ItemId: g.Key.ItemId, PalletId: g.Key.PalletId),
+                            g => g.Count()
+                        );
+
+                    foreach (var ia in allocationEntities)
+                    {
+                        var key = (ItemId: ia.ItemId, PalletId: ia.PalletId);
+
+                        inboundQtyLookup.TryGetValue(key, out var inboundQty);
+                        if (inboundQty <= 0)
+                        {
+                            continue; // Không có inbound cho cặp (Item, Pallet) này
+                        }
+
+                        pickedQtyLookup.TryGetValue(key, out var pickedQty);
+                        var remainingQty = inboundQty - pickedQty;
+                        if (remainingQty <= 0)
+                        {
+                            continue; // Đã lấy hết hàng trên pallet cho item này
+                        }
+
+                        var vm = new ItemAllocationViewModel
+                        {
+                            AllocationId = ia.AllocationId,
+                            ItemId = ia.ItemId,
+                            QrCode = ia.Item.QrCode,
+                            ItemName = ia.Item.ItemName,
+                            ItemType = ia.Item.ItemType,
+
+                            // Product information
+                            ProductId = ia.Item.ProductId,
+                            ProductCode = ia.Item.Product.ProductCode,
+                            ProductName = ia.Item.Product.ProductName,
+                            Unit = ia.Item.Product.Unit,
+                            Category = ia.Item.Product.Category,
+                            StandardLength = ia.Item.Product.StandardLength,
+                            StandardWidth = ia.Item.Product.StandardWidth,
+                            StandardHeight = ia.Item.Product.StandardHeight,
+                            StandardWeight = ia.Item.Product.StandardWeight,
+                            ProductDescription = ia.Item.Product.Description,
+                            StorageConditions = ia.Item.Product.StorageConditions,
+
+                            // Customer information
+                            CustomerId = ia.Item.CustomerId,
+                            CustomerName = ia.Item.Customer.FullName,
+
+                            // Pallet information
+                            PalletId = ia.PalletId,
+                            PositionX = ia.PositionX,
+                            PositionY = ia.PositionY,
+                            PositionZ = ia.PositionZ,
+
+                            // Item dimensions and properties
+                            Length = ia.Item.Length,
+                            Width = ia.Item.Width,
+                            Height = ia.Item.Height,
+                            Weight = ia.Item.Weight,
+                            Shape = ia.Item.Shape,
+                            PriorityLevel = ia.Item.PriorityLevel,
+                            IsHeavy = ia.Item.IsHeavy,
+                            IsFragile = ia.Item.IsFragile,
+
+                            // Batch and date information
+                            BatchNumber = ia.Item.BatchNumber,
+                            ManufacturingDate = ia.Item.ManufacturingDate,
+                            ExpiryDate = ia.Item.ExpiryDate,
+
+                            // Commercial information
+                            UnitPrice = ia.Item.UnitPrice,
+                            TotalAmount = ia.Item.TotalAmount,
+                            UnitQuantity = remainingQty
+                        };
+
+                        items.Add(vm);
+                    }
+                }
 
                 // Gắn layout chi tiết (nếu có) từ InboundItemStackUnits cho từng item trên pallet
                 if (items.Any())

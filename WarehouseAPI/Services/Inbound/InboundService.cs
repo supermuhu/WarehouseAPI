@@ -830,6 +830,22 @@ namespace WarehouseAPI.Services.Inbound
                                         text.Span(model.CustomerName ?? string.Empty).FontSize(10);
                                     });
                                 });
+
+                                row.ConstantItem(220).Column(right =>
+                                {
+                                    right.Item().AlignRight().Text(text =>
+                                    {
+                                        text.Span("Mẫu số 01 - VT").Bold().FontSize(10);
+                                    });
+                                    right.Item().AlignRight().Text(text =>
+                                    {
+                                        text.Span("(Ban hành theo Thông tư số 133/2016/TT-BTC").FontSize(8);
+                                    });
+                                    right.Item().AlignRight().Text(text =>
+                                    {
+                                        text.Span("ngày 26/08/2016 của Bộ Tài chính)").FontSize(8);
+                                    });
+                                });
                             });
 
                             col.Item().AlignCenter().Text(text =>
@@ -965,6 +981,22 @@ namespace WarehouseAPI.Services.Inbound
 
                             col.Item().Height(10);
 
+                            col.Item().Text(text =>
+                            {
+                                text.Span("- Tổng số tiền (viết bằng chữ): ").FontSize(9);
+                                text.Span("..............................................................")
+                                    .FontSize(9);
+                            });
+
+                            col.Item().Text(text =>
+                            {
+                                text.Span("- Số chứng từ gốc kèm theo: ").FontSize(9);
+                                text.Span("......................................................")
+                                    .FontSize(9);
+                            });
+
+                            col.Item().Height(10);
+
                             col.Item().Row(row =>
                             {
                                 row.RelativeItem().AlignCenter().Text(text =>
@@ -979,10 +1011,20 @@ namespace WarehouseAPI.Services.Inbound
                                 {
                                     text.Span("Thủ kho").FontSize(10).SemiBold();
                                 });
+                                row.RelativeItem().AlignCenter().Text(text =>
+                                {
+                                    text.Span("Kế toán trưởng (Hoặc bộ phận có nhu cầu nhập)")
+                                        .FontSize(10)
+                                        .SemiBold();
+                                });
                             });
 
                             col.Item().Row(row =>
                             {
+                                row.RelativeItem().AlignCenter().Text(text =>
+                                {
+                                    text.Span("(Ký, họ tên)").FontSize(9).Italic();
+                                });
                                 row.RelativeItem().AlignCenter().Text(text =>
                                 {
                                     text.Span("(Ký, họ tên)").FontSize(9).Italic();
@@ -1875,6 +1917,9 @@ namespace WarehouseAPI.Services.Inbound
                                 }
                             }
                         }
+                                }
+                            }
+                        }
                         // Hàng không phải box: cho phép FE chỉ zone + PositionX/Z trên mặt ground
                         else if (!itemIsBox
                             && prefLayout.ZoneId.HasValue
@@ -1919,6 +1964,27 @@ namespace WarehouseAPI.Services.Inbound
                                             {
                                                 collision = true;
                                                 break;
+                                            }
+                                        }
+                                    }
+
+                                    if (!collision)
+                                    {
+                                        // Không cho phép pallet dưới đất đè lên footprint của kệ trong zone
+                                        if (racksByZone.TryGetValue(zone.ZoneId, out var zoneRacksForGround) && zoneRacksForGround.Any())
+                                        {
+                                            foreach (var rack in zoneRacksForGround)
+                                            {
+                                                var rX = rack.PositionX;
+                                                var rZ = rack.PositionZ;
+                                                var rL = rack.Length;
+                                                var rW = rack.Width;
+
+                                                if (IsOverlap(x, z, pallet.Length, pallet.Width, rX, rZ, rL, rW))
+                                                {
+                                                    collision = true;
+                                                    break;
+                                                }
                                             }
                                         }
                                     }
@@ -2038,7 +2104,8 @@ namespace WarehouseAPI.Services.Inbound
                                                 StackLevel = 1,
                                                 StackedOnPallet = null,
                                                 IsGround = false,
-                                                AssignedAt = DateTime.Now
+                                                AssignedAt = DateTime.Now,
+                                                Pallet = pallet
                                             };
 
                                             newLocations.Add(location);
@@ -2115,6 +2182,26 @@ namespace WarehouseAPI.Services.Inbound
 
                                     if (collision) continue;
 
+                                    // Không cho phép pallet dưới đất đè lên footprint của kệ trong zone
+                                    if (racksByZone.TryGetValue(zone.ZoneId, out var zoneRacksForGround) && zoneRacksForGround.Any())
+                                    {
+                                        foreach (var rack in zoneRacksForGround)
+                                        {
+                                            var rX = rack.PositionX;
+                                            var rZ = rack.PositionZ;
+                                            var rL = rack.Length;
+                                            var rW = rack.Width;
+
+                                            if (IsOverlap(x, z, pallet.Length, pallet.Width, rX, rZ, rL, rW))
+                                            {
+                                                collision = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    if (!collision)
+                                    {
                                     var location = new PalletLocation
                                     {
                                         PalletId = pallet.PalletId,
@@ -2126,11 +2213,13 @@ namespace WarehouseAPI.Services.Inbound
                                         StackLevel = 1,
                                         StackedOnPallet = null,
                                         IsGround = true,
-                                        AssignedAt = DateTime.Now
+                                            AssignedAt = DateTime.Now,
+                                            Pallet = pallet
                                     };
 
                                     newLocations.Add(location);
                                     placed = true;
+                                    }
                                 }
                             }
 
@@ -3245,6 +3334,26 @@ namespace WarehouseAPI.Services.Inbound
 
                                         if (!collision)
                                         {
+                                            // Không cho phép pallet dưới đất đè lên footprint của kệ trong zone
+                                            if (racksByZone.TryGetValue(zone.ZoneId, out var zoneRacksForGroundCheck) && zoneRacksForGroundCheck.Any())
+                                            {
+                                                foreach (var rack in zoneRacksForGroundCheck)
+                                                {
+                                                    var rX = rack.PositionX;
+                                                    var rZ = rack.PositionZ;
+                                                    var rL = rack.Length;
+                                                    var rW = rack.Width;
+
+                                                    if (IsOverlap(x, z, pallet.Length, pallet.Width, rX, rZ, rL, rW))
+                                                    {
+                                                        collision = true;
+                                                        break;
+                                                    }
+                                            }
+                                        }
+
+                                        if (!collision)
+                                        {
                                             var location = new PalletLocation
                                             {
                                                 PalletId = pallet.PalletId,
@@ -3263,6 +3372,7 @@ namespace WarehouseAPI.Services.Inbound
                                             newLocations.Add(location);
                                             _context.PalletLocations.Add(location);
                                             placed = true;
+                                            }
                                         }
                                     }
                                 }
@@ -3405,6 +3515,26 @@ namespace WarehouseAPI.Services.Inbound
 
                                     if (!collision)
                                     {
+                                        // Không cho phép pallet dưới đất đè lên footprint của kệ trong zone
+                                        if (racksByZone.TryGetValue(zone.ZoneId, out var zoneRacksForGround) && zoneRacksForGround.Any())
+                                        {
+                                            foreach (var rack in zoneRacksForGround)
+                                            {
+                                                var rX = rack.PositionX;
+                                                var rZ = rack.PositionZ;
+                                                var rL = rack.Length;
+                                                var rW = rack.Width;
+
+                                                if (IsOverlap(x, z, pallet.Length, pallet.Width, rX, rZ, rL, rW))
+                                                {
+                                                    collision = true;
+                                                    break;
+                                                }
+                                        }
+                                    }
+
+                                    if (!collision)
+                                    {
                                         var location = new PalletLocation
                                         {
                                             PalletId = pallet.PalletId,
@@ -3423,6 +3553,7 @@ namespace WarehouseAPI.Services.Inbound
                                         newLocations.Add(location);
                                         _context.PalletLocations.Add(location);
                                         placed = true;
+                                        }
                                     }
                                 }
                             }

@@ -3,6 +3,8 @@
 -- ===================================
 
 -- Tạo Database
+use master
+go
 IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'WarehouseAPI')
 BEGIN
     CREATE DATABASE WarehouseAPI;
@@ -389,6 +391,26 @@ CREATE TABLE item_allocations (
 CREATE INDEX IX_item_allocations_pallet ON item_allocations(pallet_id);
 GO
 
+-- Lịch sử di chuyển / xuất kho của từng mặt hàng
+IF OBJECT_ID('item_location_history', 'U') IS NULL
+BEGIN
+    CREATE TABLE item_location_history (
+        history_id   INT IDENTITY(1,1) PRIMARY KEY,
+        item_id      INT NOT NULL,
+        pallet_id    INT NULL,
+        location_id  INT NULL,
+        action_type  VARCHAR(20) NOT NULL,
+        action_date  DATETIME2 DEFAULT GETDATE(),
+        performed_by INT NOT NULL,
+        notes        NVARCHAR(MAX) NULL,
+        CONSTRAINT FK_item_location_history_item      FOREIGN KEY (item_id)     REFERENCES items(item_id),
+        CONSTRAINT FK_item_location_history_pallet    FOREIGN KEY (pallet_id)   REFERENCES pallets(pallet_id),
+        CONSTRAINT FK_item_location_history_location  FOREIGN KEY (location_id) REFERENCES pallet_locations(location_id),
+        CONSTRAINT FK_item_location_history_account   FOREIGN KEY (performed_by) REFERENCES accounts(account_id)
+    );
+END;
+GO
+
 -- Phiếu nhập kho
 CREATE TABLE inbound_receipts (
     receipt_id INT IDENTITY(1,1) PRIMARY KEY,
@@ -456,6 +478,7 @@ CREATE TABLE outbound_receipts (
     receipt_number VARCHAR(100) NOT NULL UNIQUE,
     total_items INT NOT NULL,
     outbound_date DATETIME2 DEFAULT GETDATE(),
+    completed_date DATETIME2 NULL,
     notes NVARCHAR(MAX),
     created_by INT NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'pending',
@@ -463,6 +486,36 @@ CREATE TABLE outbound_receipts (
     CONSTRAINT FK_outbound_customer FOREIGN KEY (customer_id) REFERENCES accounts(account_id),
     CONSTRAINT FK_outbound_created_by FOREIGN KEY (created_by) REFERENCES accounts(account_id)
 );
+GO
+
+-- Chi tiết phiếu xuất kho
+CREATE TABLE outbound_items (
+    outbound_item_id INT IDENTITY(1,1) PRIMARY KEY,
+    receipt_id       INT NOT NULL,
+    item_id          INT NOT NULL,
+    quantity         INT NULL DEFAULT 1,
+    removed_at       DATETIME NULL DEFAULT GETDATE(),
+    CONSTRAINT FK_outbound_items_receipt FOREIGN KEY (receipt_id) REFERENCES outbound_receipts(receipt_id),
+    CONSTRAINT FK_outbound_items_item    FOREIGN KEY (item_id)    REFERENCES items(item_id)
+);
+GO
+
+-- Trạng thái pallet đã được lấy cho phiếu xuất
+CREATE TABLE outbound_pallet_picks (
+    pick_id    INT IDENTITY(1,1) PRIMARY KEY,
+    receipt_id INT NOT NULL,
+    pallet_id  INT NOT NULL,
+    picked_at  DATETIME2 DEFAULT GETDATE(),
+    picked_by  INT NOT NULL,
+    notes      NVARCHAR(MAX) NULL,
+    CONSTRAINT FK_outbound_pallet_picks_receipt FOREIGN KEY (receipt_id) REFERENCES outbound_receipts(receipt_id),
+    CONSTRAINT FK_outbound_pallet_picks_pallet  FOREIGN KEY (pallet_id)  REFERENCES pallets(pallet_id),
+    CONSTRAINT FK_outbound_pallet_picks_account FOREIGN KEY (picked_by)  REFERENCES accounts(account_id)
+);
+GO
+
+CREATE UNIQUE INDEX UX_outbound_pallet_picks_receipt_pallet
+    ON outbound_pallet_picks(receipt_id, pallet_id);
 GO
 
 -- Lấy ID kho để seed cổng
@@ -480,19 +533,22 @@ DECLARE @customer_b_id INT = (SELECT account_id FROM accounts WHERE username = '
 
 DECLARE @customer_c_id INT = (SELECT account_id FROM accounts WHERE username = 'customer_c');
 
--- Kho 1: Chia 3 khu cho 3 khách hàng
+-- Kho 1: Chia 3 khu cho 3 khách hàng, khoảng cách giữa Khu A - B - C ~ 2m
 INSERT INTO warehouse_zones (warehouse_id, zone_name, customer_id, position_x, position_y, position_z, length, width, height, zone_type)
 VALUES 
     (@warehouse1_id, N'Khu A - Khách Lan', @customer_a_id, 5.0, 0.0, 5.0, 15.0, 12.0, 8.0, 'ground'),
-    (@warehouse1_id, N'Khu B - Khách Hùng', @customer_b_id, 25.0, 0.0, 5.0, 15.0, 12.0, 8.0, 'ground'),
-    (@warehouse1_id, N'Khu B Rack - Khách Hùng', @customer_b_id, 25.0, 0.0, 20.0, 15.0, 8.0, 8.0, 'rack'),
-    (@warehouse1_id, N'Khu C - Khách Mai', @customer_c_id, 45.0, 0.0, 5.0, 15.0, 12.0, 8.0, 'rack');
+    -- Khu B bắt đầu sau Khu A 2m: A từ x=5..20, B từ x=22..37
+    (@warehouse1_id, N'Khu B - Khách Hùng', @customer_b_id, 22.0, 0.0, 5.0, 15.0, 12.0, 8.0, 'ground'),
+    -- Khu B Rack cùng khoảng x với Khu B ground
+    (@warehouse1_id, N'Khu B Rack - Khách Hùng', @customer_b_id, 22.0, 0.0, 19.0, 15.0, 8.0, 8.0, 'rack'),
+    -- Khu C bắt đầu sau Khu B 2m: B từ x=22..37, C từ x=39..50
+    (@warehouse1_id, N'Khu C - Khách Mai', @customer_c_id, 39.0, 0.0, 5.0, 11.0, 12.0, 8.0, 'rack');
 
 -- Kho 2: Chia 2 khu
 INSERT INTO warehouse_zones (warehouse_id, zone_name, customer_id, position_x, position_y, position_z, length, width, height, zone_type)
 VALUES 
     (@warehouse2_id, N'Khu D - Khách Lan', @customer_a_id, 5.0, 0.0, 5.0, 12.0, 10.0, 5.0, 'ground'),
-    (@warehouse2_id, N'Khu E - Khách Hùng', @customer_b_id, 20.0, 0.0, 5.0, 12.0, 10.0, 5.0, 'rack');
+    (@warehouse2_id, N'Khu E - Khách Hùng', @customer_b_id, 19.0, 0.0, 5.0, 12.0, 10.0, 5.0, 'rack');
 
 GO
 
@@ -630,59 +686,6 @@ VALUES
 GO
 
 -- ===================================
--- 6.1. PALLET (10 pallets)
--- ===================================
-
-INSERT INTO pallets (barcode, length, width, height, max_weight, max_stack_height, pallet_type, status)
-VALUES 
-    ('PLT-000001', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
-    ('PLT-000002', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
-    ('PLT-000003', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
-    ('PLT-000004', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
-    ('PLT-000005', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
-    ('PLT-000006', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
-    ('PLT-000007', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
-    ('PLT-000008', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'in_use'),
-    ('PLT-000009', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'available'),
-    ('PLT-000010', 1.20, 1.00, 0.15, 1000, 1.5, 'Standard', 'available');
-
-GO
--- ===================================
--- 7. VỊ TRÍ PALLET
--- ===================================
-
-DECLARE @zone_a_id INT = (SELECT zone_id FROM warehouse_zones WHERE zone_name LIKE N'%Khu A%');
-DECLARE @zone_b_id INT = (SELECT zone_id FROM warehouse_zones WHERE zone_name = N'Khu B - Khách Hùng');
-DECLARE @zone_c_id_loc INT = (SELECT zone_id FROM warehouse_zones WHERE zone_name LIKE N'%Khu C%');
-DECLARE @zone_d_id INT = (SELECT zone_id FROM warehouse_zones WHERE zone_name LIKE N'%Khu D%');
-
-DECLARE @shelf_c1_1 INT = (SELECT shelf_id FROM shelves WHERE rack_id = (SELECT rack_id FROM racks WHERE rack_name = N'Kệ C1') AND shelf_level = 1);
-DECLARE @shelf_c1_2 INT = (SELECT shelf_id FROM shelves WHERE rack_id = (SELECT rack_id FROM racks WHERE rack_name = N'Kệ C1') AND shelf_level = 2);
-DECLARE @shelf_c2_1 INT = (SELECT shelf_id FROM shelves WHERE rack_id = (SELECT rack_id FROM racks WHERE rack_name = N'Kệ C2') AND shelf_level = 1);
-
--- Pallet trên đất (ground) - Khu A
-INSERT INTO pallet_locations (pallet_id, zone_id, shelf_id, position_x, position_y, position_z, stack_level, is_ground)
-VALUES 
-    (1, @zone_a_id, NULL, 7.0, 0.0, 7.0, 1, 1),
-    (2, @zone_a_id, NULL, 9.5, 0.0, 7.0, 1, 1),
-    (3, @zone_a_id, NULL, 12.0, 0.0, 7.0, 1, 1);
-
--- Pallet trên đất - Khu B
-INSERT INTO pallet_locations (pallet_id, zone_id, shelf_id, position_x, position_y, position_z, stack_level, is_ground)
-VALUES 
-    (4, @zone_b_id, NULL, 27.0, 0.0, 7.0, 1, 1),
-    (5, @zone_b_id, NULL, 29.5, 0.0, 7.0, 1, 1);
-
--- Pallet trên kệ - Khu C
-INSERT INTO pallet_locations (pallet_id, zone_id, shelf_id, position_x, position_y, position_z, stack_level, is_ground)
-VALUES 
-    (6, @zone_c_id_loc, @shelf_c1_1, 46.5, 0.5, 6.5, 1, 0),
-    (7, @zone_c_id_loc, @shelf_c1_2, 46.5, 2.0, 6.5, 1, 0),
-    (8, @zone_c_id_loc, @shelf_c2_1, 51.5, 0.5, 6.5, 1, 0);
-
-GO
-
--- ===================================
 -- 8. SẢN PHẨM (Products)
 -- ===================================
 
@@ -738,83 +741,11 @@ DECLARE @customer_a_id_item INT = (SELECT account_id FROM accounts WHERE usernam
 DECLARE @customer_b_id_item INT = (SELECT account_id FROM accounts WHERE username = 'customer_b');
 DECLARE @customer_c_id_item INT = (SELECT account_id FROM accounts WHERE username = 'customer_c');
 
--- Hàng của khách Lan (Customer A) - 8 items
-INSERT INTO items (qr_code, product_id, customer_id, item_name, item_type, length, width, height, weight, shape, priority_level, is_heavy, is_fragile, batch_number, manufacturing_date, expiry_date)
-VALUES 
-    ('QR-A001', (SELECT product_id FROM products WHERE product_code = 'PROD-ELEC-001'), @customer_a_id_item, N'Thùng đồ điện tử Samsung', 'box', 0.50, 0.40, 0.35, 18.5, 'rectangle', 2, 0, 1, 'BATCH-2025-001', '2025-10-01', NULL),
-    ('QR-A002', (SELECT product_id FROM products WHERE product_code = 'PROD-FASH-001'), @customer_a_id_item, N'Thùng quần áo xuất khẩu', 'box', 0.60, 0.45, 0.40, 12.0, 'rectangle', 5, 0, 0, 'BATCH-2025-002', '2025-09-15', NULL),
-    ('QR-A003', (SELECT product_id FROM products WHERE product_code = 'PROD-FOOD-001'), @customer_a_id_item, N'Bao gạo ST25 50kg', 'bag', 0.80, 0.50, 0.20, 50.0, 'rectangle', 7, 1, 0, 'BATCH-2025-003', '2025-09-01', '2026-09-01'),
-    ('QR-A004', (SELECT product_id FROM products WHERE product_code = 'PROD-COSM-001'), @customer_a_id_item, N'Thùng mỹ phẩm cao cấp', 'box', 0.40, 0.35, 0.30, 8.5, 'rectangle', 1, 0, 1, 'BATCH-2025-004', '2025-08-01', '2027-08-01'),
-    ('QR-A005', (SELECT product_id FROM products WHERE product_code = 'PROD-FASH-002'), @customer_a_id_item, N'Thùng giày thể thao', 'box', 0.55, 0.40, 0.35, 15.0, 'rectangle', 3, 0, 0, 'BATCH-2025-005', '2025-09-20', NULL),
-    ('QR-A006', (SELECT product_id FROM products WHERE product_code = 'PROD-CONST-003'), @customer_a_id_item, N'Bao phân bón 40kg', 'bag', 0.70, 0.45, 0.18, 40.0, 'rectangle', 9, 1, 0, 'BATCH-2025-006', '2025-07-15', '2026-07-15'),
-    ('QR-A007', (SELECT product_id FROM products WHERE product_code = 'PROD-TOY-001'), @customer_a_id_item, N'Thùng đồ chơi trẻ em', 'box', 0.50, 0.45, 0.40, 10.0, 'rectangle', 4, 0, 0, 'BATCH-2025-007', '2025-09-10', NULL),
-    ('QR-A008', (SELECT product_id FROM products WHERE product_code = 'PROD-ELEC-002'), @customer_a_id_item, N'Thùng linh kiện máy tính', 'box', 0.45, 0.40, 0.30, 14.0, 'rectangle', 2, 0, 1, 'BATCH-2025-008', '2025-08-25', NULL);
-
--- Hàng của khách Hùng (Customer B) - 6 items
-INSERT INTO items (qr_code, product_id, customer_id, item_name, item_type, length, width, height, weight, shape, priority_level, is_heavy, is_fragile, batch_number, manufacturing_date)
-VALUES 
-    ('QR-B001', (SELECT product_id FROM products WHERE product_code = 'PROD-CONST-005'), @customer_b_id_item, N'Thùng dụng cụ cơ khí', 'box', 0.60, 0.50, 0.45, 25.0, 'rectangle', 6, 0, 0, 'BATCH-2025-009', '2025-09-01'),
-    ('QR-B002', (SELECT product_id FROM products WHERE product_code = 'PROD-CONST-001'), @customer_b_id_item, N'Bao xi măng 50kg', 'bag', 0.75, 0.48, 0.18, 50.0, 'rectangle', 10, 1, 0, 'BATCH-2025-010', '2025-08-15'),
-    ('QR-B003', (SELECT product_id FROM products WHERE product_code = 'PROD-CONST-004'), @customer_b_id_item, N'Thùng vật liệu xây dựng', 'box', 0.70, 0.55, 0.40, 35.0, 'rectangle', 8, 1, 0, 'BATCH-2025-011', '2025-08-20'),
-    ('QR-B004', (SELECT product_id FROM products WHERE product_code = 'PROD-ELEC-004'), @customer_b_id_item, N'Thùng thiết bị điện', 'box', 0.50, 0.45, 0.35, 16.5, 'rectangle', 4, 0, 0, 'BATCH-2025-012', '2025-09-05'),
-    ('QR-B005', (SELECT product_id FROM products WHERE product_code = 'PROD-ELEC-003'), @customer_b_id_item, N'Thùng đèn LED', 'box', 0.55, 0.40, 0.30, 12.0, 'rectangle', 3, 0, 1, 'BATCH-2025-013', '2025-08-30'),
-    ('QR-B006', (SELECT product_id FROM products WHERE product_code = 'PROD-CONST-002'), @customer_b_id_item, N'Bao cát xây dựng 40kg', 'bag', 0.70, 0.45, 0.20, 40.0, 'rectangle', 9, 1, 0, 'BATCH-2025-014', '2025-07-25');
-
--- Hàng của khách Mai (Customer C) - 6 items
-INSERT INTO items (qr_code, product_id, customer_id, item_name, item_type, length, width, height, weight, shape, priority_level, is_heavy, is_fragile, batch_number, manufacturing_date, expiry_date)
-VALUES 
-    ('QR-C001', (SELECT product_id FROM products WHERE product_code = 'PROD-STAT-001'), @customer_c_id_item, N'Thùng sách giáo khoa', 'box', 0.50, 0.40, 0.35, 20.0, 'rectangle', 5, 0, 0, 'BATCH-2025-015', '2025-06-01', NULL),
-    ('QR-C002', (SELECT product_id FROM products WHERE product_code = 'PROD-STAT-002'), @customer_c_id_item, N'Thùng văn phòng phẩm', 'box', 0.45, 0.35, 0.30, 9.0, 'rectangle', 2, 0, 0, 'BATCH-2025-016', '2025-07-10', NULL),
-    ('QR-C003', (SELECT product_id FROM products WHERE product_code = 'PROD-MED-001'), @customer_c_id_item, N'Thùng thiết bị y tế', 'box', 0.40, 0.35, 0.28, 7.5, 'rectangle', 1, 0, 1, 'BATCH-2025-017', '2025-08-01', '2030-08-01'),
-    ('QR-C004', (SELECT product_id FROM products WHERE product_code = 'PROD-MED-002'), @customer_c_id_item, N'Thùng dược phẩm', 'box', 0.38, 0.32, 0.25, 6.0, 'rectangle', 1, 0, 1, 'BATCH-2025-018', '2025-09-01', '2027-09-01'),
-    ('QR-C005', (SELECT product_id FROM products WHERE product_code = 'PROD-HOME-001'), @customer_c_id_item, N'Thùng đồ gia dụng', 'box', 0.55, 0.45, 0.40, 13.5, 'rectangle', 6, 0, 0, 'BATCH-2025-019', '2025-08-10', NULL),
-    ('QR-C006', (SELECT product_id FROM products WHERE product_code = 'PROD-FOOD-002'), @customer_c_id_item, N'Thùng thực phẩm đóng hộp', 'box', 0.50, 0.40, 0.35, 18.0, 'rectangle', 4, 0, 0, 'BATCH-2025-020', '2025-07-01', '2027-07-01');
-
 GO
 
 -- ===================================
 -- 10. PHÂN BỔ HÀNG TRÊN PALLET
 -- ===================================
-
--- Pallet 1: 1 hàng của khách A
-INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
-VALUES 
-    (1, 1, 0.0, 0.00, 0.0);   -- QR-A001
-
--- Pallet 2: 1 hàng của khách A
-INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
-VALUES 
-    (2, 2, 0.0, 0.00, 0.0);   -- QR-A002
-
--- Pallet 3: 1 hàng của khách A
-INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
-VALUES 
-    (3, 3, 0.0, 0.00, 0.0);   -- QR-A003
-
--- Pallet 4: 1 hàng của khách B
-INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
-VALUES 
-    (9, 4, 0.0, 0.00, 0.0);   -- QR-B001
-
--- Pallet 5: 1 hàng của khách B
-INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
-VALUES 
-    (10, 5, 0.0, 0.00, 0.0);  -- QR-B002
-
--- Pallet 6: 1 hàng của khách C
-INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
-VALUES 
-    (15, 6, 0.0, 0.00, 0.0);  -- QR-C001
-
--- Pallet 7: 1 hàng của khách C
-INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
-VALUES 
-    (17, 7, 0.0, 0.00, 0.0);  -- QR-C003
-
--- Pallet 8: 1 hàng của khách C
-INSERT INTO item_allocations (item_id, pallet_id, position_x, position_y, position_z)
-VALUES 
-    (19, 8, 0.0, 0.00, 0.0);  -- QR-C005
 
 GO
 
@@ -829,39 +760,11 @@ DECLARE @cust_a INT = (SELECT account_id FROM accounts WHERE username = 'custome
 DECLARE @cust_b INT = (SELECT account_id FROM accounts WHERE username = 'customer_b');
 DECLARE @cust_c INT = (SELECT account_id FROM accounts WHERE username = 'customer_c');
 
--- Phiếu nhập 1: Khách A
-INSERT INTO inbound_receipts (warehouse_id, customer_id, receipt_number, total_items, total_pallets, inbound_date, notes, created_by, status)
-VALUES 
-    (@warehouse1, @cust_a, 'IN-20251001-001', 8, 3, '2025-10-01 08:30:00', N'Nhập hàng tháng 10 - Khách Lan', @admin_id, 'completed');
-
--- Phiếu nhập 2: Khách B
-INSERT INTO inbound_receipts (warehouse_id, customer_id, receipt_number, total_items, total_pallets, inbound_date, notes, created_by, status)
-VALUES 
-    (@warehouse1, @cust_b, 'IN-20251015-002', 6, 2, '2025-10-15 10:15:00', N'Nhập vật liệu xây dựng - Khách Hùng', @admin_id, 'completed');
-
--- Phiếu nhập 3: Khách C
-INSERT INTO inbound_receipts (warehouse_id, customer_id, receipt_number, total_items, total_pallets, inbound_date, notes, created_by, status)
-VALUES 
-    (@warehouse1, @cust_c, 'IN-20251020-003', 6, 3, '2025-10-20 14:45:00', N'Nhập hàng y tế và văn phòng phẩm - Khách Mai', @admin_id, 'completed');
-
 GO
 
 -- ===================================
 -- 12. CHI TIẾT PHIẾU NHẬP
 -- ===================================
-
--- Chi tiết phiếu 1 (Khách A - items 1-8)
-INSERT INTO inbound_items (receipt_id, item_id, pallet_id, quantity)
-VALUES 
-    (1, 1, 1, 1), (1, 2, 1, 1), (1, 3, 1, 1),
-    (1, 4, 2, 1), (1, 5, 2, 1), (1, 6, 2, 1),
-    (1, 7, 3, 1), (1, 8, 3, 1);
-
--- Chi tiết phiếu 2 (Khách B - items 9-14)
-INSERT INTO inbound_items (receipt_id, item_id, pallet_id, quantity)
-VALUES 
-    (2, 9, 4, 1), (2, 10, 4, 1), (2, 11, 4, 1),
-    (2, 12, 5, 1)
 
 PRINT 'Database WarehouseAPI đã được tạo thành công cho SQL Server 2022!';
 GO

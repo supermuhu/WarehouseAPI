@@ -4,6 +4,7 @@ using WarehouseAPI.Services.Warehouse;
 using WarehouseAPI.Services.Inbound;
 using WarehouseAPI.Services.Pallet;
 using WarehouseAPI.Services.Product;
+using WarehouseAPI.Services.Outbound;
 
 namespace WarehouseAPI.ProgramConfig
 {
@@ -25,6 +26,9 @@ namespace WarehouseAPI.ProgramConfig
 
             // Product services
             services.AddScoped<IProductService, ProductService>();
+
+            // Outbound services
+            services.AddScoped<IOutboundService, OutboundService>();
         }
         
         public static void AddSingleton(this IServiceCollection services)

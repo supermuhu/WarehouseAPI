@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using QuestPDF.Infrastructure;
 using System.Text;
 using WarehouseAPI.Data;
 using WarehouseAPI.ProgramConfig;
@@ -9,6 +10,9 @@ using WarehouseAPI.ProgramConfig;
 var builder = WebApplication.CreateBuilder(args);
 var myAllowSpecificOrigins = "AllowAll";
 builder.Services.AddHttpContextAccessor();
+
+// Configure QuestPDF license
+QuestPDF.Settings.License = LicenseType.Community;
 
 // Add Database Context
 builder.Services.AddDbContext<WarehouseApiContext>(options =>

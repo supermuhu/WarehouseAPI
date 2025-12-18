@@ -437,6 +437,7 @@ public partial class WarehouseDbContext : DbContext
             entity.Property(e => e.OutboundDate)
                 .HasDefaultValueSql("(getdate())")
                 .HasColumnName("outbound_date");
+            entity.Property(e => e.CompletedDate).HasColumnName("completed_date");
             entity.Property(e => e.ReceiptNumber)
                 .HasMaxLength(100)
                 .IsUnicode(false)

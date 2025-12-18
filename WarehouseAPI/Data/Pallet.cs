@@ -34,4 +34,6 @@ public partial class Pallet
     public virtual ICollection<PalletLocation> PalletLocationStackedOnPalletNavigations { get; set; } = new List<PalletLocation>();
 
     public virtual ICollection<ItemLocationHistory> ItemLocationHistories { get; set; } = new List<ItemLocationHistory>();
+
+    public virtual ICollection<OutboundPalletPick> OutboundPalletPicks { get; set; } = new List<OutboundPalletPick>();
 }

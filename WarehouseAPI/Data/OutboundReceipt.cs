@@ -17,6 +17,8 @@ public partial class OutboundReceipt
 
     public DateTime? OutboundDate { get; set; }
 
+    public DateTime? CompletedDate { get; set; }
+
     public string? Notes { get; set; }
 
     public int CreatedBy { get; set; }
@@ -30,4 +32,6 @@ public partial class OutboundReceipt
     public virtual Warehouse Warehouse { get; set; } = null!;
 
     public virtual ICollection<OutboundItem> OutboundItems { get; set; } = new List<OutboundItem>();
+
+    public virtual ICollection<OutboundPalletPick> OutboundPalletPicks { get; set; } = new List<OutboundPalletPick>();
 }

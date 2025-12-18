@@ -42,4 +42,6 @@ public partial class Account
     public virtual ICollection<Warehouse> Warehouses { get; set; } = new List<Warehouse>();
 
     public virtual ICollection<ItemLocationHistory> ItemLocationHistories { get; set; } = new List<ItemLocationHistory>();
+
+    public virtual ICollection<OutboundPalletPick> OutboundPalletPicks { get; set; } = new List<OutboundPalletPick>();
 }
