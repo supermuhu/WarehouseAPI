@@ -121,6 +121,34 @@ namespace WarehouseAPI.Services.Outbound
                     );
                 }
 
+                // Chỉ cho phép xuất các pallet "ở trên cùng" (không có pallet nào khác đang xếp chồng lên)
+                var palletIds = baseList
+                    .Select(x => x.pl.PalletId)
+                    .Distinct()
+                    .ToList();
+
+                if (palletIds.Any())
+                {
+                    var blockedPalletIds = _context.PalletLocations
+                        .Where(pl => pl.StackedOnPallet.HasValue && palletIds.Contains(pl.StackedOnPallet.Value))
+                        .Select(pl => pl.StackedOnPallet!.Value)
+                        .Distinct()
+                        .ToHashSet();
+
+                    baseList = baseList
+                        .Where(row => !blockedPalletIds.Contains(row.pl.PalletId))
+                        .ToList();
+
+                    if (!baseList.Any())
+                    {
+                        return ApiResponse<List<OutboundAvailablePalletViewModel>>.Ok(
+                            new List<OutboundAvailablePalletViewModel>(),
+                            "Không có pallet nào khả dụng để xuất kho (tất cả đều đang là pallet đáy trong stack)",
+                            200
+                        );
+                    }
+                }
+
                 var itemIds = baseList.Select(x => x.item.ItemId).Distinct().ToList();
 
                 var inboundItems = _context.InboundItems

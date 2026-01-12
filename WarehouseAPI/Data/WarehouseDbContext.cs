@@ -821,6 +821,12 @@ public partial class WarehouseDbContext : DbContext
             entity.Property(e => e.WarehouseName)
                 .HasMaxLength(200)
                 .HasColumnName("warehouse_name");
+            entity.Property(e => e.Address)
+                .HasMaxLength(500)
+                .HasColumnName("address");
+            entity.Property(e => e.IsRentable)
+                .HasColumnName("is_rentable")
+                .HasDefaultValue(true);
             entity.Property(e => e.WarehouseType)
                 .HasMaxLength(20)
                 .IsUnicode(false)

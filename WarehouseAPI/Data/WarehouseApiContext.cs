@@ -724,6 +724,9 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.PositionZ)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("position_z");
+            entity.Property(e => e.RotationY)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("rotation_y");
             entity.Property(e => e.RackName)
                 .HasMaxLength(200)
                 .HasColumnName("rack_name");
@@ -817,6 +820,12 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.WarehouseName)
                 .HasMaxLength(200)
                 .HasColumnName("warehouse_name");
+            entity.Property(e => e.Address)
+                .HasMaxLength(500)
+                .HasColumnName("address");
+            entity.Property(e => e.IsRentable)
+                .HasColumnName("is_rentable")
+                .HasDefaultValue(true);
             entity.Property(e => e.WarehouseType)
                 .HasMaxLength(20)
                 .IsUnicode(false)

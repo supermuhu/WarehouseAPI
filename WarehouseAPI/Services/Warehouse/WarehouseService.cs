@@ -76,6 +76,7 @@ namespace WarehouseAPI.Services.Warehouse
                         Width = r.Width,
                         Height = r.Height,
                         MaxShelves = r.MaxShelves,
+                        RotationY = r.RotationY,
                         Shelves = r.Shelves.Select(s => new ShelfViewModel
                         {
                             ShelfId = s.ShelfId,
@@ -534,6 +535,8 @@ namespace WarehouseAPI.Services.Warehouse
                     WarehouseType = warehouse.WarehouseType,
                     AllowedItemTypes = warehouse.AllowedItemTypes,
                     Status = warehouse.Status,
+                    Address = warehouse.Address,
+                    IsRentable = warehouse.IsRentable,
                     Zones = zones,
                     Racks = racks,
                     Pallets = pallets,
@@ -555,6 +558,105 @@ namespace WarehouseAPI.Services.Warehouse
             }
         }
 
+        public ApiResponse SetWarehouseRentable(int warehouseId, bool isRentable, int accountId, string role)
+        {
+            try
+            {
+                var warehouse = db.Warehouses.FirstOrDefault(w => w.WarehouseId == warehouseId);
+                if (warehouse == null)
+                {
+                    return new ApiResponse(404, "Không tìm thấy kho", null);
+                }
+
+                var normalizedRole = role?.ToLower() ?? string.Empty;
+                var isAdmin = normalizedRole == "admin";
+                var isOwner = normalizedRole == "warehouse_owner" || warehouse.OwnerId == accountId;
+
+                if (!isAdmin && !isOwner)
+                {
+                    return new ApiResponse(403, "Bạn không có quyền thay đổi trạng thái cho thuê của kho này", null);
+                }
+
+                warehouse.IsRentable = isRentable;
+                db.SaveChanges();
+
+                var message = isRentable ? "Kho đã bật cho thuê" : "Kho đã ngừng cho thuê";
+                return new ApiResponse(200, message, null);
+            }
+            catch (Exception e)
+            {
+                return new ApiResponse(502, e.Message, null);
+            }
+        }
+
+        public ApiResponse CreateWarehouse(int accountId, string role, CreateWarehouseModel model)
+        {
+            try
+            {
+                var normalizedRole = role?.ToLower() ?? string.Empty;
+                var isAdmin = normalizedRole == "admin";
+                var isOwnerRole = normalizedRole == "warehouse_owner";
+
+                if (!isAdmin && !isOwnerRole)
+                {
+                    return new ApiResponse(403, "Chỉ admin hoặc chủ kho mới được tạo kho", null);
+                }
+
+                var ownerId = model.OwnerId;
+
+                if (isOwnerRole)
+                {
+                    ownerId = accountId;
+                }
+
+                var owner = db.Accounts.FirstOrDefault(a => a.AccountId == ownerId);
+                if (owner == null)
+                {
+                    return new ApiResponse(404, "Không tìm thấy chủ kho", null);
+                }
+
+                var warehouse = new Data.Warehouse
+                {
+                    OwnerId = ownerId,
+                    WarehouseName = model.WarehouseName,
+                    Address = model.Address,
+                    Length = model.Length,
+                    Width = model.Width,
+                    Height = model.Height,
+                    WarehouseType = model.WarehouseType,
+                    AllowedItemTypes = model.AllowedItemTypes,
+                    CreatedAt = DateTime.UtcNow,
+                    Status = "active"
+                    // IsRentable sẽ dùng giá trị mặc định từ database (BIT DEFAULT 1)
+                };
+
+                db.Warehouses.Add(warehouse);
+                db.SaveChanges();
+
+                var vm = new WarehouseListViewModel
+                {
+                    WarehouseId = warehouse.WarehouseId,
+                    WarehouseName = warehouse.WarehouseName,
+                    OwnerId = warehouse.OwnerId,
+                    OwnerName = owner.FullName,
+                    Address = warehouse.Address,
+                    Length = warehouse.Length,
+                    Width = warehouse.Width,
+                    Height = warehouse.Height,
+                    WarehouseType = warehouse.WarehouseType,
+                    Status = warehouse.Status,
+                    IsRentable = warehouse.IsRentable,
+                    CreatedAt = warehouse.CreatedAt
+                };
+
+                return new ApiResponse(201, "Tạo kho thành công", vm);
+            }
+            catch (Exception e)
+            {
+                return new ApiResponse(502, e.Message, null);
+            }
+        }
+
         public ApiResponse GetAllWarehouses()
         {
             try
@@ -568,11 +670,13 @@ namespace WarehouseAPI.Services.Warehouse
                         WarehouseName = w.WarehouseName,
                         OwnerId = w.OwnerId,
                         OwnerName = w.Owner.FullName,
+                        Address = w.Address,
                         Length = w.Length,
                         Width = w.Width,
                         Height = w.Height,
                         WarehouseType = w.WarehouseType,
                         Status = w.Status,
+                        IsRentable = w.IsRentable,
                         CreatedAt = w.CreatedAt
                     })
                     .ToList();
@@ -590,7 +694,8 @@ namespace WarehouseAPI.Services.Warehouse
             try
             {
                 // Ưu tiên trả về danh sách theo từng zone (khu vực) để FE có thể hiển thị
-                // "Kho - Khu vực" giống như luồng customer.
+                // "Kho - Khu vực" giống như luồng customer, nhưng vẫn phải bao gồm cả
+                // những kho chưa cấu hình zone để chủ kho nhìn thấy kho vừa tạo.
                 var zones = db.WarehouseZones
                     .Include(z => z.Warehouse)
                         .ThenInclude(w => w.Owner)
@@ -601,28 +706,57 @@ namespace WarehouseAPI.Services.Warehouse
 
                 if (zones.Any())
                 {
-                    warehouses = zones
+                    var zoneBased = zones
                         .Select(z => new WarehouseListViewModel
                         {
                             WarehouseId = z.WarehouseId,
                             WarehouseName = z.Warehouse.WarehouseName,
                             OwnerId = z.Warehouse.OwnerId,
                             OwnerName = z.Warehouse.Owner.FullName,
+                            Address = z.Warehouse.Address,
                             Length = z.Warehouse.Length,
                             Width = z.Warehouse.Width,
                             Height = z.Warehouse.Height,
                             WarehouseType = z.Warehouse.WarehouseType,
                             Status = z.Warehouse.Status,
+                            IsRentable = z.Warehouse.IsRentable,
                             CreatedAt = z.Warehouse.CreatedAt,
                             ZoneId = z.ZoneId,
                             ZoneName = z.ZoneName,
                             ZoneType = z.ZoneType
                         })
                         .ToList();
+
+                    var warehouseIdsWithZones = new HashSet<int>(zoneBased.Select(x => x.WarehouseId));
+
+                    // Bổ sung các kho chưa có zone để không bị mất kho mới tạo
+                    var noZoneWarehouses = db.Warehouses
+                        .Include(w => w.Owner)
+                        .Where(w => w.OwnerId == ownerId && !warehouseIdsWithZones.Contains(w.WarehouseId))
+                        .Select(w => new WarehouseListViewModel
+                        {
+                            WarehouseId = w.WarehouseId,
+                            WarehouseName = w.WarehouseName,
+                            OwnerId = w.OwnerId,
+                            OwnerName = w.Owner.FullName,
+                            Address = w.Address,
+                            Length = w.Length,
+                            Width = w.Width,
+                            Height = w.Height,
+                            WarehouseType = w.WarehouseType,
+                            Status = w.Status,
+                            IsRentable = w.IsRentable,
+                            CreatedAt = w.CreatedAt
+                        })
+                        .ToList();
+
+                    warehouses = zoneBased
+                        .Concat(noZoneWarehouses)
+                        .ToList();
                 }
                 else
                 {
-                    // Nếu chưa cấu hình zone, fallback về danh sách kho như cũ
+                    // Nếu chưa cấu hình zone, trả về danh sách kho theo chủ kho như cũ
                     warehouses = db.Warehouses
                         .Include(w => w.Owner)
                         .Where(w => w.OwnerId == ownerId)
@@ -632,11 +766,13 @@ namespace WarehouseAPI.Services.Warehouse
                             WarehouseName = w.WarehouseName,
                             OwnerId = w.OwnerId,
                             OwnerName = w.Owner.FullName,
+                            Address = w.Address,
                             Length = w.Length,
                             Width = w.Width,
                             Height = w.Height,
                             WarehouseType = w.WarehouseType,
                             Status = w.Status,
+                            IsRentable = w.IsRentable,
                             CreatedAt = w.CreatedAt
                         })
                         .ToList();
@@ -672,11 +808,13 @@ namespace WarehouseAPI.Services.Warehouse
                         WarehouseName = z.Warehouse.WarehouseName,
                         OwnerId = z.Warehouse.OwnerId,
                         OwnerName = z.Warehouse.Owner.FullName,
+                        Address = z.Warehouse.Address,
                         Length = z.Warehouse.Length,
                         Width = z.Warehouse.Width,
                         Height = z.Warehouse.Height,
                         WarehouseType = z.Warehouse.WarehouseType,
                         Status = z.Warehouse.Status,
+                        IsRentable = z.Warehouse.IsRentable,
                         CreatedAt = z.Warehouse.CreatedAt,
                         ZoneId = z.ZoneId,
                         ZoneName = z.ZoneName,
@@ -872,6 +1010,7 @@ namespace WarehouseAPI.Services.Warehouse
                 rack.RackName = request.RackName ?? rack.RackName;
                 rack.PositionX = request.PositionX;
                 rack.PositionZ = request.PositionZ;
+                rack.RotationY = request.RotationY;
                 if (request.Height.HasValue)
                 {
                     rack.Height = request.Height.Value;
@@ -930,6 +1069,7 @@ namespace WarehouseAPI.Services.Warehouse
 
                     rack.PositionX = item.PositionX;
                     rack.PositionZ = item.PositionZ;
+                    rack.RotationY = item.RotationY;
                 }
 
                 db.SaveChanges();

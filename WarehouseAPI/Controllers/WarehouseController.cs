@@ -60,6 +60,47 @@ namespace WarehouseAPI.Controllers
         }
 
         /// <summary>
+        /// Bật / tắt trạng thái cho thuê của kho
+        /// </summary>
+        [HttpPut("{warehouseId}/rent-status")]
+        public IActionResult SetWarehouseRentStatus(int warehouseId, [FromQuery] bool isRentable)
+        {
+            var accountId = Utils.GetCurrentAccountId(User);
+            var role = Utils.GetCurrentRole(User);
+
+            if (accountId == null)
+            {
+                return Unauthorized(new { message = "Token không hợp lệ" });
+            }
+
+            var result = warehouseService.SetWarehouseRentable(warehouseId, isRentable, accountId.Value, role);
+            if (result.StatusCode == 200)
+            {
+                return Ok(result);
+            }
+            return StatusCode(result.StatusCode, result);
+        }
+
+        [HttpPost]
+        public IActionResult CreateWarehouse([FromBody] CreateWarehouseModel model)
+        {
+            var accountId = Utils.GetCurrentAccountId(User);
+            var role = Utils.GetCurrentRole(User);
+
+            if (accountId == null)
+            {
+                return Unauthorized(new { message = "Token không hợp lệ" });
+            }
+
+            var result = warehouseService.CreateWarehouse(accountId.Value, role, model);
+            if (result.StatusCode == 201 || result.StatusCode == 200)
+            {
+                return StatusCode(result.StatusCode, result);
+            }
+            return StatusCode(result.StatusCode, result);
+        }
+
+        /// <summary>
         /// Lấy danh sách kho theo chủ kho
         /// </summary>
         /// <param name="ownerId">ID của chủ kho</param>

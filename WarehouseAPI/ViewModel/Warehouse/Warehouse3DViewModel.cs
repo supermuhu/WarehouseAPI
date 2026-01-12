@@ -13,8 +13,10 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public decimal Width { get; set; }
         public decimal Height { get; set; }
         public string? WarehouseType { get; set; }
+        public string? Address { get; set; }
         public string? AllowedItemTypes { get; set; }
         public string? Status { get; set; }
+        public bool IsRentable { get; set; }
         public decimal? CheckinPositionX { get; set; }
         public decimal? CheckinPositionY { get; set; }
         public decimal? CheckinPositionZ { get; set; }
@@ -38,11 +40,13 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public string? WarehouseName { get; set; }
         public int OwnerId { get; set; }
         public string? OwnerName { get; set; }
+        public string? Address { get; set; }
         public decimal Length { get; set; }
         public decimal Width { get; set; }
         public decimal Height { get; set; }
         public string? WarehouseType { get; set; }
         public string? Status { get; set; }
+        public bool IsRentable { get; set; }
         public DateTime? CreatedAt { get; set; }
         public int? ZoneId { get; set; }
         public string? ZoneName { get; set; }
@@ -82,6 +86,7 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public decimal Width { get; set; }
         public decimal Height { get; set; }
         public int? MaxShelves { get; set; }
+        public decimal RotationY { get; set; }
         public List<ShelfViewModel> Shelves { get; set; } = new List<ShelfViewModel>();
     }
 

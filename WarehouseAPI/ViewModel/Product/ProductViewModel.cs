@@ -14,6 +14,7 @@ public class ProductViewModel
     public decimal? StandardWeight { get; set; }
     public bool? IsFragile { get; set; }
     public bool? IsHazardous { get; set; }
+    public bool? IsNonStackable { get; set; }
     public string? StorageConditions { get; set; }
     public int? CreateUser { get; set; }
     public string? Status { get; set; }

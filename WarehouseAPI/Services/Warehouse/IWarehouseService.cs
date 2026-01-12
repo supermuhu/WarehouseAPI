@@ -9,6 +9,7 @@ namespace WarehouseAPI.Services.Warehouse
         ApiResponse GetAllWarehouses();
         ApiResponse GetWarehousesByOwner(int ownerId);
         ApiResponse GetWarehousesByCustomer(int customerId);
+        ApiResponse CreateWarehouse(int accountId, string role, CreateWarehouseModel model);
 
         // Rack management by zone
         ApiResponse GetZoneRacks(int zoneId, int accountId, string role);
@@ -16,5 +17,6 @@ namespace WarehouseAPI.Services.Warehouse
         ApiResponse UpdateRack(int zoneId, int rackId, int accountId, string role, UpdateRackRequest request);
         ApiResponse BulkUpdateRackPositions(int zoneId, int accountId, string role, BulkUpdateRackPositionsRequest request);
         ApiResponse DeleteRack(int zoneId, int rackId, int accountId, string role);
+        ApiResponse SetWarehouseRentable(int warehouseId, bool isRentable, int accountId, string role);
     }
 }

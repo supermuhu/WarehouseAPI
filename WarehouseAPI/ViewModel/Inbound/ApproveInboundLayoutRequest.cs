@@ -34,6 +34,13 @@ public class PreferredPalletLayoutDto
     /// Góc xoay pallet quanh trục Y (radians). Nếu null, BE hiểu là 0 (không xoay).
     /// </summary>
     public decimal? RotationY { get; set; }
+
+    /// <summary>
+    /// Nếu được chỉ định, pallet này sẽ cố gắng được xếp CHỒNG lên pallet có Id tương ứng
+    /// (StackLevel = 2) thay vì đặt riêng trên nền/kệ. BE vẫn sẽ kiểm tra thêm các rule an toàn
+    /// như pallet dưới cho phép xếp chồng, chiều cao tổng & mặt trên pallet dưới phải phẳng.
+    /// </summary>
+    public int? StackedOnPalletId { get; set; }
 }
 
 public class ApproveInboundLayoutRequest

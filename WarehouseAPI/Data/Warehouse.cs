@@ -11,6 +11,8 @@ public partial class Warehouse
 
     public string WarehouseName { get; set; } = null!;
 
+    public string? Address { get; set; }
+
     public decimal Length { get; set; }
 
     public decimal Width { get; set; }
@@ -36,6 +38,8 @@ public partial class Warehouse
     public DateTime? CreatedAt { get; set; }
 
     public string? Status { get; set; }
+
+    public bool IsRentable { get; set; }
 
     public virtual ICollection<InboundReceipt> InboundReceipts { get; set; } = new List<InboundReceipt>();
 

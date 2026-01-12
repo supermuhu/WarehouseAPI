@@ -25,6 +25,7 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public decimal Width { get; set; }
         public decimal Height { get; set; }
         public int? MaxShelves { get; set; }
+        public decimal RotationY { get; set; }
     }
 
     public class UpdateRackRequest
@@ -33,6 +34,7 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public decimal PositionX { get; set; }
         public decimal PositionZ { get; set; }
         public decimal? Height { get; set; }
+        public decimal RotationY { get; set; }
     }
 
     public class RackPositionUpdateItem
@@ -40,6 +42,7 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public int RackId { get; set; }
         public decimal PositionX { get; set; }
         public decimal PositionZ { get; set; }
+        public decimal RotationY { get; set; }
     }
 
     public class BulkUpdateRackPositionsRequest

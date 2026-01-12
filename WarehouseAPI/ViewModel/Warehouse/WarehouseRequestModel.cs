@@ -10,6 +10,8 @@ namespace WarehouseAPI.ViewModel.Warehouse
         [Required(ErrorMessage = "Tên kho là bắt buộc")]
         public string WarehouseName { get; set; } = string.Empty;
 
+        public string? Address { get; set; }
+
         [Required(ErrorMessage = "ID chủ kho là bắt buộc")]
         public int OwnerId { get; set; }
 
@@ -38,6 +40,7 @@ namespace WarehouseAPI.ViewModel.Warehouse
     public class UpdateWarehouseModel
     {
         public string? WarehouseName { get; set; }
+        public string? Address { get; set; }
         
         [Range(1, 1000, ErrorMessage = "Chiều dài phải từ 1 đến 1000 mét")]
         public decimal? Length { get; set; }

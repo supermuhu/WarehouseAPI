@@ -65,6 +65,7 @@ namespace WarehouseAPI.Services.Product
                         StandardWeight = p.StandardWeight,
                         IsFragile = p.IsFragile,
                         IsHazardous = p.IsHazardous,
+                        IsNonStackable = p.IsNonStackable,
                         StorageConditions = p.StorageConditions,
                         CreateUser = p.CreateUser,
                         Status = p.Status
@@ -119,6 +120,7 @@ namespace WarehouseAPI.Services.Product
                     StandardWeight = request.StandardWeight,
                     IsFragile = request.IsFragile ?? false,
                     IsHazardous = request.IsHazardous ?? false,
+                    IsNonStackable = request.IsNonStackable ?? false,
                     StorageConditions = request.StorageConditions,
                     CreateUser = accountId,
                     Status = "active",
@@ -143,6 +145,7 @@ namespace WarehouseAPI.Services.Product
                     StandardWeight = product.StandardWeight,
                     IsFragile = product.IsFragile,
                     IsHazardous = product.IsHazardous,
+                    IsNonStackable = product.IsNonStackable,
                     StorageConditions = product.StorageConditions,
                     CreateUser = product.CreateUser,
                     Status = product.Status

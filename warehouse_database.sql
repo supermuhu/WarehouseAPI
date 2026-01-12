@@ -90,6 +90,7 @@ CREATE TABLE warehouses (
     warehouse_id INT IDENTITY(1,1) PRIMARY KEY,
     owner_id INT NOT NULL,
     warehouse_name NVARCHAR(200) NOT NULL,
+    address NVARCHAR(500) NULL,
 
     length DECIMAL(10,2) NOT NULL, -- mét
     width DECIMAL(10,2) NOT NULL,
@@ -99,6 +100,7 @@ CREATE TABLE warehouses (
     -- medium: bao hoặc thùng
     -- large: tất cả loại
     allowed_item_types NVARCHAR(MAX), -- JSON string ['bag', 'box', 'pallet']
+    is_rentable BIT NOT NULL DEFAULT 1,
     checkin_position_x DECIMAL(10,2) NULL,
     checkin_position_y DECIMAL(10,2) NULL,
     checkin_position_z DECIMAL(10,2) NULL,
@@ -136,10 +138,10 @@ GO
 
 DECLARE @owner_id INT = (SELECT account_id FROM accounts WHERE username = 'chukhoa');
 
-INSERT INTO warehouses (owner_id, warehouse_name, length, width, height, warehouse_type, allowed_item_types, status)
+INSERT INTO warehouses (owner_id, warehouse_name, address, length, width, height, warehouse_type, allowed_item_types, status, is_rentable)
 VALUES 
-    (@owner_id, N'Kho Trung Tâm - Quận 7', 50.00, 30.00, 8.00, 'large', '["bag", "box", "pallet"]', 'active'),
-    (@owner_id, N'Kho Chi Nhánh - Bình Thạnh', 30.00, 20.00, 5.00, 'medium', '["bag", "box"]', 'active');
+    (@owner_id, N'Kho Trung Tâm - Quận 7', N'Quận 7, TP. Hồ Chí Minh', 50.00, 30.00, 8.00, 'large', '["bag", "box", "pallet"]', 'active', 1),
+    (@owner_id, N'Kho Chi Nhánh - Bình Thạnh', N'Quận Bình Thạnh, TP. Hồ Chí Minh', 30.00, 20.00, 5.00, 'medium', '["bag", "box"]', 'active', 1);
 
 UPDATE warehouses
 SET checkin_position_x = 3.00,

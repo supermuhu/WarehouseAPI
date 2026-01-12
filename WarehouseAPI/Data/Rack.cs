@@ -23,6 +23,8 @@ public partial class Rack
 
     public decimal Height { get; set; }
 
+    public decimal RotationY { get; set; }
+
     public int? MaxShelves { get; set; }
 
     public DateTime? CreatedAt { get; set; }

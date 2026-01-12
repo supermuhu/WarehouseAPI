@@ -37,6 +37,8 @@ public class CreateProductRequest
 
     public bool? IsHazardous { get; set; }
 
+    public bool? IsNonStackable { get; set; }
+
     public string? StorageConditions { get; set; }
 }
 
