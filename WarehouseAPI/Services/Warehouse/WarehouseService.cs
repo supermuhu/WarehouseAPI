@@ -133,6 +133,7 @@ namespace WarehouseAPI.Services.Warehouse
                         Length = g.Length,
                         Width = g.Width,
                         Height = g.Height,
+                        RotationY = g.RotationY,
                         GateType = g.GateType
                     })
                     .ToList();

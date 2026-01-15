@@ -1981,8 +1981,7 @@ namespace WarehouseAPI.Services.Inbound
                     if (forceUsePreferred && preferredLayoutMap.TryGetValue(pallet.PalletId, out var prefLayout))
                     {
                         // Hàng box: ưu tiên layout có ZoneId + ShelfId + PositionX/Z trên kệ
-                        if (itemIsBox
-                            && prefLayout.ZoneId.HasValue
+                        if (prefLayout.ZoneId.HasValue
                             && prefLayout.ShelfId.HasValue
                             && prefLayout.PositionX.HasValue
                             && prefLayout.PositionZ.HasValue)
@@ -3622,9 +3621,8 @@ namespace WarehouseAPI.Services.Inbound
                     // thử xếp đúng toạ độ này trước khi chạy thuật toán quét chuẩn.
                     if (forceUsePreferred && preferredLayoutMap.TryGetValue(pallet.PalletId, out var prefLayout))
                     {
-                        // Hàng box: ưu tiên layout có ZoneId + ShelfId + PositionX/Z trên kệ
-                        if (itemIsBox
-                            && prefLayout.ZoneId.HasValue
+                        // Ưu tiên layout có ZoneId + ShelfId + PositionX/Z trên kệ (áp dụng cho mọi loại hàng)
+                        if (prefLayout.ZoneId.HasValue
                             && prefLayout.ShelfId.HasValue
                             && prefLayout.PositionX.HasValue
                             && prefLayout.PositionZ.HasValue)

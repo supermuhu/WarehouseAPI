@@ -23,6 +23,8 @@ public partial class WarehouseGate
 
     public decimal? Height { get; set; }
 
+    public decimal RotationY { get; set; }
+
     public string GateType { get; set; } = null!;
 
     public DateTime? CreatedAt { get; set; }

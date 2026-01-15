@@ -224,6 +224,7 @@ namespace WarehouseAPI.ViewModel.Warehouse
         public decimal? Length { get; set; }
         public decimal? Width { get; set; }
         public decimal? Height { get; set; }
+        public decimal RotationY { get; set; }
         public string GateType { get; set; } = string.Empty;
     }
 }

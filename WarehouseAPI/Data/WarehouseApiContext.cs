@@ -860,6 +860,9 @@ public partial class WarehouseApiContext : DbContext
             entity.Property(e => e.Height)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("height");
+            entity.Property(e => e.RotationY)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("rotation_y");
             entity.Property(e => e.Length)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("length");
