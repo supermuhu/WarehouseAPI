@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using WarehouseAPI.Data;
 using WarehouseAPI.Helpers;
 using WarehouseAPI.ViewModel.Warehouse;
@@ -8,18 +9,31 @@ namespace WarehouseAPI.Services.Warehouse
     public class WarehouseService : IWarehouseService
     {
         private readonly WarehouseApiContext db;
+        private readonly IMemoryCache _cache;
+        private static readonly TimeSpan CacheDuration = TimeSpan.FromSeconds(30);
 
-        public WarehouseService(WarehouseApiContext db)
+        public WarehouseService(WarehouseApiContext db, IMemoryCache cache)
         {
             this.db = db;
+            _cache = cache;
         }
 
-        public ApiResponse GetWarehouse3DData(int warehouseId, int accountId, string role)
+        public ApiResponse GetWarehouse3DData(int warehouseId, int accountId, string role, bool noCache = false)
         {
             try
             {
+                // Tạo cache key dựa trên warehouse, account và role
+                var cacheKey = $"warehouse3d_{warehouseId}_{accountId}_{role}";
+                
+                // Thử lấy từ cache trước (trừ khi noCache=true)
+                if (!noCache && _cache.TryGetValue(cacheKey, out ApiResponse cachedResponse))
+                {
+                    return cachedResponse;
+                }
+
                 var warehouse = db.Warehouses
                     .Include(w => w.Owner)
+                    .AsNoTracking()
                     .FirstOrDefault(w => w.WarehouseId == warehouseId);
 
                 if (warehouse == null)
@@ -34,6 +48,7 @@ namespace WarehouseAPI.Services.Warehouse
                 // Load zones - filter theo role
                 var zonesQuery = db.WarehouseZones
                     .Include(z => z.Customer)
+                    .AsNoTracking()
                     .Where(z => z.WarehouseId == warehouseId);
 
                 // Nếu là customer, chỉ lấy zones của họ
@@ -63,6 +78,7 @@ namespace WarehouseAPI.Services.Warehouse
                 var zoneIds = zones.Select(z => z.ZoneId).ToList();
                 var racks = db.Racks
                     .Include(r => r.Shelves)
+                    .AsNoTracking()
                     .Where(r => zoneIds.Contains(r.ZoneId))
                     .Select(r => new RackViewModel
                     {
@@ -93,8 +109,7 @@ namespace WarehouseAPI.Services.Warehouse
                 // Load pallets with locations
                 var pallets = db.PalletLocations
                     .Include(pl => pl.Pallet)
-                    .Include(pl => pl.Zone)
-                    .Include(pl => pl.Shelf)
+                    .AsNoTracking()
                     .Where(pl => zoneIds.Contains(pl.ZoneId))
                     .Select(pl => new PalletLocationViewModel
                     {
@@ -121,6 +136,7 @@ namespace WarehouseAPI.Services.Warehouse
                     .ToList();
 
                 var gates = db.WarehouseGates
+                    .AsNoTracking()
                     .Where(g => g.WarehouseId == warehouseId)
                     .Select(g => new WarehouseGateViewModel
                     {
@@ -146,6 +162,7 @@ namespace WarehouseAPI.Services.Warehouse
                     .ThenInclude(i => i.Customer)
                     .Include(ia => ia.Item)
                     .ThenInclude(i => i.Product)
+                    .AsNoTracking()
                     .Where(ia => palletIds.Contains(ia.PalletId))
                     .ToList();
 
@@ -551,7 +568,12 @@ namespace WarehouseAPI.Services.Warehouse
                     Gates = gates
                 };
 
-                return new ApiResponse(200, "Lấy dữ liệu kho 3D thành công", result);
+                var response = new ApiResponse(200, "Lấy dữ liệu kho 3D thành công", result);
+                
+                // Cache response trong 30 giây
+                _cache.Set(cacheKey, response, CacheDuration);
+                
+                return response;
             }
             catch (Exception e)
             {

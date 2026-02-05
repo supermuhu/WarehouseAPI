@@ -24,9 +24,10 @@ namespace WarehouseAPI.Controllers
         /// Customer: Chỉ nhìn zones của họ
         /// </summary>
         /// <param name="warehouseId">ID của kho</param>
+        /// <param name="noCache">Bỏ qua cache để lấy dữ liệu mới nhất</param>
         /// <returns>Dữ liệu kho bao gồm zones, racks, shelves, pallets, items</returns>
         [HttpGet("{warehouseId}/3d-data")]
-        public IActionResult GetWarehouse3DData(int warehouseId)
+        public IActionResult GetWarehouse3DData(int warehouseId, [FromQuery] bool noCache = false)
         {
             var accountId = Utils.GetCurrentAccountId(User);
             var role = Utils.GetCurrentRole(User);
@@ -36,7 +37,7 @@ namespace WarehouseAPI.Controllers
                 return Unauthorized(new { message = "Token không hợp lệ" });
             }
 
-            var result = warehouseService.GetWarehouse3DData(warehouseId, accountId.Value, role);
+            var result = warehouseService.GetWarehouse3DData(warehouseId, accountId.Value, role, noCache);
             if (result.StatusCode == 200)
             {
                 return Ok(result);

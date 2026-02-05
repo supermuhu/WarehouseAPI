@@ -462,7 +462,7 @@ namespace WarehouseAPI.Services.Inbound
                     if (string.Equals(stackMode, "auto", StringComparison.OrdinalIgnoreCase))
                     {
                         var tpl = request.AutoStackTemplate?.Trim().ToLower();
-                        if (tpl == "straight" || tpl == "brick" || tpl == "cross")
+                        if (tpl == "straight" || tpl == "pinwheel")
                         {
                             autoStackTemplate = tpl;
                         }
@@ -576,7 +576,7 @@ namespace WarehouseAPI.Services.Inbound
                             hasAnyAutoItem = true;
                             string? itemPattern = null;
                             var itemTpl = itemRequest.AutoStackTemplate?.Trim().ToLower();
-                            if (itemTpl == "straight" || itemTpl == "brick" || itemTpl == "cross")
+                            if (itemTpl == "straight" || itemTpl == "pinwheel")
                             {
                                 itemPattern = itemTpl;
                             }
@@ -712,7 +712,7 @@ namespace WarehouseAPI.Services.Inbound
                     pattern = (receipt.AutoStackTemplate ?? "straight").Trim().ToLowerInvariant();
                 }
 
-                if (pattern != "brick" && pattern != "cross" && pattern != "straight")
+                if (pattern != "pinwheel" && pattern != "straight")
                 {
                     pattern = "straight";
                 }
@@ -768,29 +768,157 @@ namespace WarehouseAPI.Services.Inbound
                     unitHeight = ii.Item.Height > 0m ? ii.Item.Height : 0.1m;
                 }
 
-                // Bước lưới & hướng đặt khối trên pallet.
-                //  - Với pattern "cross": vẫn dùng ô vuông theo kích thước lớn hơn giữa L/W để an toàn khi có xoay 90°.
-                //  - Với "straight" / "brick": thử cả hai hướng (L×W) và (W×L), chọn hướng cho số lượng mỗi tầng (perLayer) lớn hơn.
-                decimal layoutLength = unitLength;
-                decimal layoutWidth = unitWidth;
-                decimal stepX;
-                decimal stepZ;
-                int maxPerRow;
-                int maxPerCol;
-                int perLayer;
-
-                if (pattern == "cross")
+                if (pattern == "pinwheel")
                 {
-                    var step = Math.Max(unitLength, unitWidth);
-                    stepX = step;
-                    stepZ = step;
+                    // ========== THUẬT TOÁN PINWHEEL (đồng bộ với FE) ==========
+                    // Pinwheel pattern với 4 khối đồng đều:
+                    // - B0 (top-left): đứng (|||), n cột × m hàng
+                    // - B1 (top-right): ngang (===), m cột × n hàng
+                    // - B2 (bottom-right): đứng (|||), n cột × m hàng
+                    // - B3 (bottom-left): ngang (===), m cột × n hàng
 
-                    maxPerRow = Math.Max(1, (int)Math.Floor((double)(palletLength / stepX)));
-                    maxPerCol = Math.Max(1, (int)Math.Floor((double)(palletWidth / stepZ)));
-                    perLayer = Math.Max(1, maxPerRow * maxPerCol);
+                    var Wp = palletLength;
+                    var Dp = palletWidth;
+                    var w = unitLength; // Box width (không xoay)
+                    var d = unitWidth;  // Box depth (không xoay)
+
+                    // Đảm bảo w >= d
+                    if (w < d)
+                    {
+                        var tmp = w;
+                        w = d;
+                        d = tmp;
+                    }
+
+                    int bestN = 0;
+                    int bestM = 0;
+                    int bestBoxes = 0;
+
+                    int maxN = (int)Math.Floor((double)(Wp / d)) + 1;
+                    int maxM = (int)Math.Floor((double)(Wp / w)) + 1;
+
+                    for (int n = 1; n <= maxN; n++)
+                    {
+                        for (int m = 1; m <= maxM; m++)
+                        {
+                            var totalWidth = n * d + m * w;
+                            var totalHeight = m * w + n * d;
+
+                            if (totalWidth > Wp + 0.001m) continue;
+                            if (totalHeight > Dp + 0.001m) continue;
+
+                            var totalBoxesCalc = 4 * n * m;
+
+                            if (totalBoxesCalc > bestBoxes)
+                            {
+                                bestBoxes = totalBoxesCalc;
+                                bestN = n;
+                                bestM = m;
+                            }
+                        }
+                    }
+
+                    if (bestN < 1 || bestM < 1)
+                    {
+                        // Fallback to straight
+                        bestN = 1;
+                        bestM = 1;
+                    }
+
+                    var nVal = bestN;
+                    var mVal = bestM;
+
+                    var blockVWidth = nVal * d;
+                    var blockVHeight = mVal * w;
+                    var blockHWidth = mVal * w;
+                    var blockHHeight = nVal * d;
+
+                    var totalWidthPat = blockVWidth + blockHWidth;
+                    var totalHeightPat = blockVHeight + blockHHeight;
+
+                    var offsetX = (Wp - totalWidthPat) / 2m;
+                    var offsetY = (Dp - totalHeightPat) / 2m;
+
+                    int perLayer = 4 * nVal * mVal;
+
+                    for (var idx = 0; idx < quantity; idx++)
+                    {
+                        var layerIndex = idx / perLayer;
+                        var posInLayer = idx % perLayer;
+
+                        // Determine which block and position within block
+                        var boxesPerBlock = nVal * mVal;
+                        var blockIndex = posInLayer / boxesPerBlock;
+                        var posInBlock = posInLayer % boxesPerBlock;
+
+                        decimal localX, localZ;
+                        bool isRotated;
+
+                        if (blockIndex == 0)
+                        {
+                            // B0 (trên-trái): đứng (|||), n cột × m hàng
+                            var row = posInBlock / nVal;
+                            var col = posInBlock % nVal;
+                            localX = offsetX + col * d + d / 2m;
+                            localZ = offsetY + blockHHeight + row * w + w / 2m;
+                            isRotated = true;
+                        }
+                        else if (blockIndex == 1)
+                        {
+                            // B1 (trên-phải): ngang (===), m cột × n hàng
+                            var row = posInBlock / mVal;
+                            var col = posInBlock % mVal;
+                            localX = offsetX + blockVWidth + col * w + w / 2m;
+                            localZ = offsetY + blockVHeight + row * d + d / 2m;
+                            isRotated = false;
+                        }
+                        else if (blockIndex == 2)
+                        {
+                            // B2 (dưới-phải): đứng (|||), n cột × m hàng
+                            var row = posInBlock / nVal;
+                            var col = posInBlock % nVal;
+                            localX = offsetX + blockHWidth + col * d + d / 2m;
+                            localZ = offsetY + row * w + w / 2m;
+                            isRotated = true;
+                        }
+                        else
+                        {
+                            // B3 (dưới-trái): ngang (===), m cột × n hàng
+                            var row = posInBlock / mVal;
+                            var col = posInBlock % mVal;
+                            localX = offsetX + col * w + w / 2m;
+                            localZ = offsetY + row * d + d / 2m;
+                            isRotated = false;
+                        }
+
+                        // Convert to center-based coordinate (pallet center = 0,0)
+                        localX = localX - Wp / 2m;
+                        localZ = localZ - Dp / 2m;
+
+                        var boxW = isRotated ? d : w;
+                        var boxD = isRotated ? w : d;
+
+                        var localYVal = palletHeight + unitHeight / 2m + layerIndex * unitHeight;
+
+                        var entity = new InboundItemStackUnit
+                        {
+                            InboundItemId = ii.InboundItemId,
+                            UnitIndex = idx,
+                            LocalX = localX,
+                            LocalY = localYVal,
+                            LocalZ = localZ,
+                            Length = boxW,
+                            Width = boxD,
+                            Height = unitHeight,
+                            RotationY = 0m // No rotation needed, size already adjusted
+                        };
+
+                        _context.InboundItemStackUnits.Add(entity);
+                    }
                 }
                 else
                 {
+                    // Straight pattern: xếp lưới đơn giản
                     // Hướng 0°: length song song palletLength, width song song palletWidth
                     var stepX0 = unitLength;
                     var stepZ0 = unitWidth;
@@ -805,82 +933,72 @@ namespace WarehouseAPI.Services.Inbound
                     var maxPerCol1 = Math.Max(1, (int)Math.Floor((double)(palletWidth / stepZ1)));
                     var perLayer1 = Math.Max(1, maxPerRow1 * maxPerCol1);
 
+                    decimal chosenStepX, chosenStepZ;
+                    int chosenMaxPerRow, chosenMaxPerCol, chosenPerLayer;
+                    decimal chosenLayoutLength, chosenLayoutWidth;
+
                     if (perLayer1 > perLayer0)
                     {
-                        layoutLength = unitWidth;
-                        layoutWidth = unitLength;
-
-                        stepX = stepX1;
-                        stepZ = stepZ1;
-                        maxPerRow = maxPerRow1;
-                        maxPerCol = maxPerCol1;
-                        perLayer = perLayer1;
+                        chosenLayoutLength = unitWidth;
+                        chosenLayoutWidth = unitLength;
+                        chosenStepX = stepX1;
+                        chosenStepZ = stepZ1;
+                        chosenMaxPerRow = maxPerRow1;
+                        chosenMaxPerCol = maxPerCol1;
+                        chosenPerLayer = perLayer1;
                     }
                     else
                     {
-                        stepX = stepX0;
-                        stepZ = stepZ0;
-                        maxPerRow = maxPerRow0;
-                        maxPerCol = maxPerCol0;
-                        perLayer = perLayer0;
+                        chosenLayoutLength = unitLength;
+                        chosenLayoutWidth = unitWidth;
+                        chosenStepX = stepX0;
+                        chosenStepZ = stepZ0;
+                        chosenMaxPerRow = maxPerRow0;
+                        chosenMaxPerCol = maxPerCol0;
+                        chosenPerLayer = perLayer0;
                     }
-                }
 
-                var halfPalL = palletLength / 2m;
-                var halfPalW = palletWidth / 2m;
-                var halfL = layoutLength / 2m;
-                var halfW = layoutWidth / 2m;
+                    var halfPalL = palletLength / 2m;
+                    var halfPalW = palletWidth / 2m;
+                    var halfL = chosenLayoutLength / 2m;
+                    var halfW = chosenLayoutWidth / 2m;
 
-                for (var idx = 0; idx < quantity; idx++)
-                {
-                    var layer = idx / perLayer;
-                    var posInLayer = idx % perLayer;
-                    var row = posInLayer / maxPerRow;
-                    var col = posInLayer % maxPerRow;
-
-                    var xStart = -palletLength / 2m + stepX / 2m;
-                    var zStart = -palletWidth / 2m + stepZ / 2m;
-
-                    decimal dx = 0m;
-                    decimal rotY = 0m;
-
-                    if (pattern == "brick")
+                    for (var idx = 0; idx < quantity; idx++)
                     {
-                        dx = (layer % 2 == 1) ? layoutLength / 2m : 0m;
-                    }
-                    else if (pattern == "cross")
-                    {
-                        if (((row + col) % 2) == 1)
+                        var layer = idx / chosenPerLayer;
+                        var posInLayer = idx % chosenPerLayer;
+                        var row = posInLayer / chosenMaxPerRow;
+                        var col = posInLayer % chosenMaxPerRow;
+
+                        var xStart = -palletLength / 2m + chosenStepX / 2m;
+                        var zStart = -palletWidth / 2m + chosenStepZ / 2m;
+
+                        var localX = xStart + col * chosenStepX;
+                        var localZ = zStart + row * chosenStepZ;
+
+                        // Clamp vị trí trong phạm vi pallet
+                        if (localX > halfPalL - halfL) localX = halfPalL - halfL;
+                        if (localX < -halfPalL + halfL) localX = -halfPalL + halfL;
+                        if (localZ > halfPalW - halfW) localZ = halfPalW - halfW;
+                        if (localZ < -halfPalW + halfW) localZ = -halfPalW + halfW;
+
+                        var localY = palletHeight + unitHeight / 2m + layer * unitHeight;
+
+                        var entity = new InboundItemStackUnit
                         {
-                            rotY = (decimal)(Math.PI / 2.0);
-                        }
+                            InboundItemId = ii.InboundItemId,
+                            UnitIndex = idx,
+                            LocalX = localX,
+                            LocalY = localY,
+                            LocalZ = localZ,
+                            Length = chosenLayoutLength,
+                            Width = chosenLayoutWidth,
+                            Height = unitHeight,
+                            RotationY = 0m
+                        };
+
+                        _context.InboundItemStackUnits.Add(entity);
                     }
-
-                    var localX = xStart + col * stepX + dx;
-                    var localZ = zStart + row * stepZ;
-
-                    // Clamp vị trí trong phạm vi pallet (đặc biệt khi có dx cho pattern brick)
-                    if (localX > halfPalL - halfL) localX = halfPalL - halfL;
-                    if (localX < -halfPalL + halfL) localX = -halfPalL + halfL;
-                    if (localZ > halfPalW - halfW) localZ = halfPalW - halfW;
-                    if (localZ < -halfPalW + halfW) localZ = -halfPalW + halfW;
-
-                    var localY = palletHeight + unitHeight / 2m + layer * unitHeight;
-
-                    var entity = new InboundItemStackUnit
-                    {
-                        InboundItemId = ii.InboundItemId,
-                        UnitIndex = idx,
-                        LocalX = localX,
-                        LocalY = localY,
-                        LocalZ = localZ,
-                        Length = layoutLength,
-                        Width = layoutWidth,
-                        Height = unitHeight,
-                        RotationY = rotY
-                    };
-
-                    _context.InboundItemStackUnits.Add(entity);
                 }
             }
         }
@@ -1920,10 +2038,115 @@ namespace WarehouseAPI.Services.Inbound
 
                 var newLocations = new List<PalletLocation>();
 
+                // Load zone layout configs cho các zone ground
+                var groundZoneIds = zones
+                    .Where(z => z.ZoneType == "ground")
+                    .Select(z => z.ZoneId)
+                    .ToList();
+                var zoneLayoutConfigs = _context.ZoneLayoutConfigs
+                    .Where(c => groundZoneIds.Contains(c.ZoneId) && c.IsActive)
+                    .ToDictionary(c => c.ZoneId);
+
                 // Hàm kiểm tra overlap 2 hình chữ nhật trên mặt phẳng XZ
                 bool IsOverlap(decimal x1, decimal z1, decimal l1, decimal w1, decimal x2, decimal z2, decimal l2, decimal w2)
                 {
                     return x1 < x2 + l2 && x1 + l1 > x2 && z1 < z2 + w2 && z1 + w1 > z2;
+                }
+
+                // Hàm kiểm tra vị trí (x, z) có nằm trong vùng để pallet (không nằm trong aisle)
+                // Trả về true nếu toàn bộ pallet (từ x,z đến x+palletL, z+palletW) nằm trong pallet zone
+                bool IsInPalletZone(decimal x, decimal z, decimal palletL, decimal palletW, WarehouseZone zone)
+                {
+                    if (!zoneLayoutConfigs.TryGetValue(zone.ZoneId, out var config))
+                    {
+                        // Không có config => cho phép xếp bất kỳ đâu trong zone (hành vi cũ)
+                        return true;
+                    }
+
+                    // Tính vị trí tương đối trong zone
+                    decimal relX = x - zone.PositionX - config.StartOffsetX;
+                    decimal relZ = z - zone.PositionZ - config.StartOffsetZ;
+
+                    if (relX < 0 || relZ < 0) return false;
+
+                    // Convention: block_width = chiều DỌC (Z), block_depth = chiều NGANG (X)
+                    // FirstBlockWidth: kích thước block đầu tiên theo Z (nếu khác kích thước các block sau)
+                    // FirstBlockDepth: kích thước block đầu tiên theo X (nếu khác kích thước các block sau)
+                    
+                    decimal firstBlockWidth = config.FirstBlockWidth ?? config.BlockWidth;
+                    decimal firstBlockDepth = config.FirstBlockDepth ?? config.BlockDepth;
+                    decimal repeatX = config.BlockDepth + config.VerticalAisleWidth;
+                    decimal repeatZ = config.BlockWidth + config.HorizontalAisleWidth;
+                    
+                    // XỬ LÝ FIRST_BLOCK_DEPTH (theo X)
+                    decimal effectiveBlockDepth;
+                    decimal posInCellX;
+                    
+                    if (config.FirstBlockDepth.HasValue && config.FirstBlockDepth.Value != config.BlockDepth)
+                    {
+                        decimal firstBlockEnd = firstBlockDepth;
+                        decimal firstBlockAndAisle = firstBlockDepth + config.VerticalAisleWidth;
+                        
+                        if (relX < firstBlockEnd)
+                        {
+                            posInCellX = relX;
+                            effectiveBlockDepth = firstBlockDepth;
+                        }
+                        else if (relX < firstBlockAndAisle)
+                        {
+                            return false; // Trong aisle
+                        }
+                        else
+                        {
+                            decimal relXAfterFirst = relX - firstBlockAndAisle;
+                            posInCellX = relXAfterFirst % repeatX;
+                            effectiveBlockDepth = config.BlockDepth;
+                        }
+                    }
+                    else
+                    {
+                        posInCellX = relX % repeatX;
+                        effectiveBlockDepth = config.BlockDepth;
+                    }
+                    
+                    // XỬ LÝ FIRST_BLOCK_WIDTH (theo Z)
+                    decimal effectiveBlockWidth;
+                    decimal posInCellZ;
+                    
+                    if (config.FirstBlockWidth.HasValue && config.FirstBlockWidth.Value != config.BlockWidth)
+                    {
+                        decimal firstBlockEndZ = firstBlockWidth;
+                        decimal firstBlockAndAisleZ = firstBlockWidth + config.HorizontalAisleWidth;
+                        
+                        if (relZ < firstBlockEndZ)
+                        {
+                            posInCellZ = relZ;
+                            effectiveBlockWidth = firstBlockWidth;
+                        }
+                        else if (relZ < firstBlockAndAisleZ)
+                        {
+                            return false; // Trong aisle
+                        }
+                        else
+                        {
+                            decimal relZAfterFirst = relZ - firstBlockAndAisleZ;
+                            posInCellZ = relZAfterFirst % repeatZ;
+                            effectiveBlockWidth = config.BlockWidth;
+                        }
+                    }
+                    else
+                    {
+                        posInCellZ = relZ % repeatZ;
+                        effectiveBlockWidth = config.BlockWidth;
+                    }
+
+                    // Kiểm tra xem pallet có nằm gọn trong block không
+                    bool startsInBlockX = posInCellX < effectiveBlockDepth;
+                    bool startsInBlockZ = posInCellZ < effectiveBlockWidth;
+                    bool fitsInBlockX = posInCellX + palletL <= effectiveBlockDepth;
+                    bool fitsInBlockZ = posInCellZ + palletW <= effectiveBlockWidth;
+
+                    return startsInBlockX && startsInBlockZ && fitsInBlockX && fitsInBlockZ;
                 }
 
                 foreach (var ii in inboundItems)
@@ -2570,8 +2793,113 @@ namespace WarehouseAPI.Services.Inbound
                             if (stacked) break;
                         }
 
-                        // Nếu không xếp chồng được, fallback sang đặt pallet riêng trên nền
+                        // Nếu không xếp chồng được, thử xếp lên kệ trước (cho zone loại rack)
                         if (!stacked)
+                        {
+                            // Ưu tiên xếp lên kệ trước cho zone loại rack
+                            foreach (var zone in OrderZonesByProximity(candidateZones.Where(z => z.ZoneType == "rack").ToList()))
+                            {
+                                if (!racksByZone.TryGetValue(zone.ZoneId, out var zoneRacks) || !zoneRacks.Any())
+                                {
+                                    continue;
+                                }
+
+                                foreach (var rack in zoneRacks.OrderBy(r => r.PositionZ).ThenBy(r => r.PositionX))
+                                {
+                                    foreach (var shelf in rack.Shelves.OrderBy(s => s.ShelfLevel))
+                                    {
+                                        var shelfExisting = existingLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+                                        var shelfNew = newLocations.Where(l => l.ShelfId == shelf.ShelfId).ToList();
+
+                                        var palletHeightForShelf = pallet.Height;
+                                        var itemStackHeightForShelf = ii.Item.Height;
+                                        var clearHeight = GetShelfClearHeight(rack, shelf);
+
+                                        if (palletHeightForShelf + itemStackHeightForShelf > clearHeight)
+                                        {
+                                            continue;
+                                        }
+
+                                        var shelfX = rack.PositionX;
+                                        var shelfZ = rack.PositionZ;
+                                        var shelfLength = Math.Min(rack.Length, shelf.Length);
+                                        var shelfWidth = Math.Min(rack.Width, shelf.Width);
+
+                                        if (pallet.Length > shelfLength || pallet.Width > shelfWidth)
+                                        {
+                                            continue;
+                                        }
+
+                                        var shelfStepX = pallet.Length;
+                                        var shelfStepZ = pallet.Width;
+
+                                        var maxShelfX = shelfX + shelfLength;
+                                        var maxShelfZ = shelfZ + shelfWidth;
+
+                                        for (decimal sx = shelfX; sx + pallet.Length <= maxShelfX && !placed; sx += shelfStepX)
+                                        {
+                                            for (decimal sz = shelfZ; sz + pallet.Width <= maxShelfZ && !placed; sz += shelfStepZ)
+                                            {
+                                                bool shelfCollision = false;
+
+                                                foreach (var loc in shelfExisting)
+                                                {
+                                                    var otherPallet = loc.Pallet;
+                                                    if (IsOverlap(sx, sz, pallet.Length, pallet.Width,
+                                                            loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                                    {
+                                                        shelfCollision = true;
+                                                        break;
+                                                    }
+                                                }
+
+                                                if (shelfCollision) continue;
+
+                                                foreach (var loc in shelfNew)
+                                                {
+                                                    var otherPallet = loc.Pallet;
+                                                    if (IsOverlap(sx, sz, pallet.Length, pallet.Width,
+                                                            loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                                    {
+                                                        shelfCollision = true;
+                                                        break;
+                                                    }
+                                                }
+
+                                                if (shelfCollision) continue;
+
+                                                var shelfLocation = new PalletLocation
+                                                {
+                                                    PalletId = pallet.PalletId,
+                                                    ZoneId = zone.ZoneId,
+                                                    ShelfId = shelf.ShelfId,
+                                                    PositionX = sx,
+                                                    PositionY = shelf.PositionY,
+                                                    PositionZ = sz,
+                                                    StackLevel = 1,
+                                                    StackedOnPallet = null,
+                                                    IsGround = false,
+                                                    AssignedAt = DateTime.Now,
+                                                    Pallet = pallet
+                                                };
+
+                                                newLocations.Add(shelfLocation);
+                                                placed = true;
+                                            }
+                                        }
+
+                                        if (placed) break;
+                                    }
+
+                                    if (placed) break;
+                                }
+
+                                if (placed) break;
+                            }
+                        }
+
+                        // Nếu vẫn chưa xếp được, fallback sang đặt pallet riêng trên nền
+                        if (!stacked && !placed)
                         {
                             foreach (var zone in OrderZonesByProximity(candidateZones))
                             {
@@ -2581,25 +2909,61 @@ namespace WarehouseAPI.Services.Inbound
                                 var maxX = zone.PositionX + zone.Length;
                                 var maxZ = zone.PositionZ + zone.Width;
 
-                                if (pallet.Length > zone.Length || pallet.Width > zone.Width)
+                                // Xác định xem có cần xoay pallet 90° không dựa trên zone layout config
+                                // block_width = chiều DỌC của block (Z), block_depth = chiều NGANG (X)
+                                // Khi block_width > block_depth => block dọc => xoay pallet 90° để chiều dài theo Z
+                                bool shouldRotate = false;
+                                decimal effectivePalletL = pallet.Length;
+                                decimal effectivePalletW = pallet.Width;
+                                decimal rotationY = 0m;
+
+                                if (zoneLayoutConfigs.TryGetValue(zone.ZoneId, out var layoutConfig))
+                                {
+                                    // Block dọc: block_width > block_depth => xoay pallet 90° (chiều dài theo Z)
+                                    if (layoutConfig.BlockWidth > layoutConfig.BlockDepth)
+                                    {
+                                        shouldRotate = true;
+                                        effectivePalletL = pallet.Width;  // Sau khi xoay: Width -> X
+                                        effectivePalletW = pallet.Length; // Sau khi xoay: Length -> Z
+                                        rotationY = 90m;
+                                    }
+                                }
+
+                                if (effectivePalletL > zone.Length || effectivePalletW > zone.Width)
                                 {
                                     continue;
                                 }
 
-                                var stepX = pallet.Length;
-                                var stepZ = pallet.Width;
+                                // Sử dụng step nhỏ hơn để scan chính xác vị trí trong các block
+                                // Nếu có zone layout config, step = 0.1m để tìm vị trí chính xác trong block
+                                // Nếu không có config, step = kích thước pallet (hành vi cũ)
+                                var hasLayoutConfig = zoneLayoutConfigs.ContainsKey(zone.ZoneId);
+                                var stepX = hasLayoutConfig ? 0.1m : effectivePalletL;
+                                var stepZ = hasLayoutConfig ? 0.1m : effectivePalletW;
 
-                                for (decimal x = zone.PositionX; x + pallet.Length <= maxX && !placed; x += stepX)
+                                // Ưu tiên xếp hết theo X (ngang) trước, rồi mới chuyển sang hàng Z tiếp theo
+                                // Z ở vòng ngoài, X ở vòng trong => xếp đầy hàng ngang trước
+                                for (decimal z = zone.PositionZ; z + effectivePalletW <= maxZ && !placed; z += stepZ)
                                 {
-                                    for (decimal z = zone.PositionZ; z + pallet.Width <= maxZ && !placed; z += stepZ)
+                                    for (decimal x = zone.PositionX; x + effectivePalletL <= maxX && !placed; x += stepX)
                                     {
+                                        // Kiểm tra vị trí có nằm trong vùng để pallet (không nằm trong aisle)
+                                        if (!IsInPalletZone(x, z, effectivePalletL, effectivePalletW, zone))
+                                        {
+                                            continue;
+                                        }
+
                                         bool collision = false;
 
                                         foreach (var loc in zoneExisting)
                                         {
                                             var otherPallet = loc.Pallet;
-                                            if (IsOverlap(x, z, pallet.Length, pallet.Width,
-                                                    loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                            // Khi kiểm tra collision, cần tính kích thước thực tế của pallet khác dựa trên rotation
+                                            var otherRotated = loc.RotationY == 90m || loc.RotationY == 270m;
+                                            var otherL = otherRotated ? otherPallet.Width : otherPallet.Length;
+                                            var otherW = otherRotated ? otherPallet.Length : otherPallet.Width;
+                                            if (IsOverlap(x, z, effectivePalletL, effectivePalletW,
+                                                    loc.PositionX, loc.PositionZ, otherL, otherW))
                                             {
                                                 collision = true;
                                                 break;
@@ -2611,8 +2975,12 @@ namespace WarehouseAPI.Services.Inbound
                                         foreach (var loc in zoneNew)
                                         {
                                             var otherPallet = loc.Pallet;
-                                            if (IsOverlap(x, z, pallet.Length, pallet.Width,
-                                                    loc.PositionX, loc.PositionZ, otherPallet.Length, otherPallet.Width))
+                                            // Khi kiểm tra collision với pallet mới, cũng cần tính rotation
+                                            var otherRotated = loc.RotationY == 90m || loc.RotationY == 270m;
+                                            var otherL = otherRotated ? otherPallet.Width : otherPallet.Length;
+                                            var otherW = otherRotated ? otherPallet.Length : otherPallet.Width;
+                                            if (IsOverlap(x, z, effectivePalletL, effectivePalletW,
+                                                    loc.PositionX, loc.PositionZ, otherL, otherW))
                                             {
                                                 collision = true;
                                                 break;
@@ -2631,7 +2999,7 @@ namespace WarehouseAPI.Services.Inbound
                                                 var rL = rack.Length;
                                                 var rW = rack.Width;
 
-                                                if (IsOverlap(x, z, pallet.Length, pallet.Width, rX, rZ, rL, rW))
+                                                if (IsOverlap(x, z, effectivePalletL, effectivePalletW, rX, rZ, rL, rW))
                                                 {
                                                     collision = true;
                                                     break;
@@ -2649,6 +3017,7 @@ namespace WarehouseAPI.Services.Inbound
                                                 PositionX = x,
                                                 PositionY = zone.PositionY,
                                                 PositionZ = z,
+                                                RotationY = rotationY,
                                                 StackLevel = 1,
                                                 StackedOnPallet = null,
                                                 IsGround = true,
@@ -2691,6 +3060,7 @@ namespace WarehouseAPI.Services.Inbound
                         PositionX = l.PositionX,
                         PositionY = l.PositionY,
                         PositionZ = l.PositionZ,
+                        RotationY = l.RotationY,
                         StackLevel = l.StackLevel,
                         StackedOnPalletId = l.StackedOnPallet,
                         IsGround = l.IsGround

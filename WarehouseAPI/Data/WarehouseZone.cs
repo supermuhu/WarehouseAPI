@@ -36,4 +36,6 @@ public partial class WarehouseZone
     public virtual ICollection<Rack> Racks { get; set; } = new List<Rack>();
 
     public virtual Warehouse Warehouse { get; set; } = null!;
+
+    public virtual ICollection<ZoneLayoutConfig> ZoneLayoutConfigs { get; set; } = new List<ZoneLayoutConfig>();
 }

@@ -6,6 +6,7 @@ using QuestPDF.Infrastructure;
 using System.Text;
 using WarehouseAPI.Data;
 using WarehouseAPI.ProgramConfig;
+using WarehouseAPI.Services.Pathfinding;
 
 var builder = WebApplication.CreateBuilder(args);
 var myAllowSpecificOrigins = "AllowAll";
@@ -13,6 +14,9 @@ builder.Services.AddHttpContextAccessor();
 
 // Configure QuestPDF license
 QuestPDF.Settings.License = LicenseType.Community;
+
+// Add Memory Cache for performance
+builder.Services.AddMemoryCache();
 
 // Add Database Context
 builder.Services.AddDbContext<WarehouseApiContext>(options =>
@@ -22,6 +26,7 @@ builder.Services.AddDbContext<WarehouseApiContext>(options =>
 builder.Services.AddScoped();
 builder.Services.AddSingleton();
 builder.Services.AddTransient();
+builder.Services.AddScoped<IPathfindingService, PathfindingService>();
 
 // Add services to the container.
 

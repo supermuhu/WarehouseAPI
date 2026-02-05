@@ -53,6 +53,8 @@ public partial class WarehouseApiContext : DbContext
 
     public virtual DbSet<WarehouseZone> WarehouseZones { get; set; }
 
+    public virtual DbSet<ZoneLayoutConfig> ZoneLayoutConfigs { get; set; }
+
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         => optionsBuilder.UseSqlServer("Name=ConnectionStrings:Warehouse");
 
@@ -384,6 +386,32 @@ public partial class WarehouseApiContext : DbContext
                 .HasForeignKey(d => d.PerformedBy)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_history_performed_by");
+        });
+
+        modelBuilder.Entity<ZoneLayoutConfig>(entity =>
+        {
+            entity.HasKey(e => e.ConfigId).HasName("PK_zone_layout_configs");
+
+            entity.ToTable("zone_layout_configs");
+
+            entity.Property(e => e.ConfigId).HasColumnName("config_id");
+            entity.Property(e => e.ZoneId).HasColumnName("zone_id");
+            entity.Property(e => e.BlockWidth).HasColumnType("decimal(10, 2)").HasColumnName("block_width");
+            entity.Property(e => e.BlockDepth).HasColumnType("decimal(10, 2)").HasColumnName("block_depth");
+            entity.Property(e => e.FirstBlockWidth).HasColumnType("decimal(10, 2)").HasColumnName("first_block_width");
+            entity.Property(e => e.FirstBlockDepth).HasColumnType("decimal(10, 2)").HasColumnName("first_block_depth");
+            entity.Property(e => e.HorizontalAisleWidth).HasColumnType("decimal(10, 2)").HasColumnName("horizontal_aisle_width");
+            entity.Property(e => e.VerticalAisleWidth).HasColumnType("decimal(10, 2)").HasColumnName("vertical_aisle_width");
+            entity.Property(e => e.StartOffsetX).HasColumnType("decimal(10, 2)").HasColumnName("start_offset_x");
+            entity.Property(e => e.StartOffsetZ).HasColumnType("decimal(10, 2)").HasColumnName("start_offset_z");
+            entity.Property(e => e.IsActive).HasColumnName("is_active");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+
+            entity.HasOne(d => d.Zone).WithMany(p => p.ZoneLayoutConfigs)
+                .HasForeignKey(d => d.ZoneId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_zone_layout_configs_zone");
         });
 
         modelBuilder.Entity<OutboundItem>(entity =>

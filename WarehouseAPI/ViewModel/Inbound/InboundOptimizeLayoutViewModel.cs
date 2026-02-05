@@ -8,6 +8,7 @@ public class InboundOptimizeLayoutItemViewModel
     public decimal PositionX { get; set; }
     public decimal PositionY { get; set; }
     public decimal PositionZ { get; set; }
+    public decimal RotationY { get; set; }
     public int StackLevel { get; set; }
     public int? StackedOnPalletId { get; set; }
     public bool IsGround { get; set; }

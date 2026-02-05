@@ -47,6 +47,8 @@ public partial class WarehouseDbContext : DbContext
 
     public virtual DbSet<WarehouseZone> WarehouseZones { get; set; }
 
+    public virtual DbSet<ZoneLayoutConfig> ZoneLayoutConfigs { get; set; }
+
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         => optionsBuilder.UseSqlServer("Data Source=DESKTOP-QRGRNC1\\SQLEXPRESS;Initial Catalog=WarehouseAPI;Integrated Security=True;Trust Server Certificate=True");
 
@@ -900,6 +902,59 @@ public partial class WarehouseDbContext : DbContext
                 .HasForeignKey(d => d.WarehouseId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_zones_warehouse");
+        });
+
+        modelBuilder.Entity<ZoneLayoutConfig>(entity =>
+        {
+            entity.HasKey(e => e.ConfigId).HasName("PK_zone_layout_configs");
+
+            entity.ToTable("zone_layout_configs");
+
+            entity.HasIndex(e => e.ZoneId, "IX_zone_layout_configs_zone");
+
+            entity.Property(e => e.ConfigId).HasColumnName("config_id");
+            entity.Property(e => e.ZoneId).HasColumnName("zone_id");
+            entity.Property(e => e.BlockWidth)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("block_width");
+            entity.Property(e => e.BlockDepth)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("block_depth");
+            entity.Property(e => e.FirstBlockWidth)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("first_block_width");
+            entity.Property(e => e.FirstBlockDepth)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("first_block_depth");
+            entity.Property(e => e.HorizontalAisleWidth)
+                .HasColumnType("decimal(10, 2)")
+                .HasDefaultValue(0m)
+                .HasColumnName("horizontal_aisle_width");
+            entity.Property(e => e.VerticalAisleWidth)
+                .HasColumnType("decimal(10, 2)")
+                .HasDefaultValue(0m)
+                .HasColumnName("vertical_aisle_width");
+            entity.Property(e => e.StartOffsetX)
+                .HasColumnType("decimal(10, 2)")
+                .HasDefaultValue(0m)
+                .HasColumnName("start_offset_x");
+            entity.Property(e => e.StartOffsetZ)
+                .HasColumnType("decimal(10, 2)")
+                .HasDefaultValue(0m)
+                .HasColumnName("start_offset_z");
+            entity.Property(e => e.IsActive)
+                .HasDefaultValue(true)
+                .HasColumnName("is_active");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt)
+                .HasColumnName("updated_at");
+
+            entity.HasOne(d => d.Zone).WithMany()
+                .HasForeignKey(d => d.ZoneId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_zone_layout_configs_zone");
         });
 
         OnModelCreatingPartial(modelBuilder);

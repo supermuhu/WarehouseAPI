@@ -20,7 +20,7 @@ public class CreateInboundRequestRequest
     public string StackMode { get; set; } = "auto";
 
     /// <summary>
-    /// Mã template auto stack mà customer chọn (straight/brick/cross).
+    /// Mã template auto stack mà customer chọn (straight/pinwheel).
     /// </summary>
     public string? AutoStackTemplate { get; set; }
 

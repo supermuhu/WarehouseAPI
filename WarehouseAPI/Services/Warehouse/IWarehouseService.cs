@@ -5,7 +5,7 @@ namespace WarehouseAPI.Services.Warehouse
 {
     public interface IWarehouseService
     {
-        ApiResponse GetWarehouse3DData(int warehouseId, int accountId, string role);
+        ApiResponse GetWarehouse3DData(int warehouseId, int accountId, string role, bool noCache = false);
         ApiResponse GetAllWarehouses();
         ApiResponse GetWarehousesByOwner(int ownerId);
         ApiResponse GetWarehousesByCustomer(int customerId);
